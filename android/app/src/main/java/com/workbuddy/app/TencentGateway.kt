@@ -19,12 +19,18 @@ object TencentGateway {
     const val CLIENT_UA = "WorkBuddy/5.5.4 WorkBuddy AI/5.5.4 CLI/2.137.1"
     const val DEFAULT_SYSTEM_PROMPT = "You are WorkBuddy, an advanced AI programming assistant developed by Tencent."
 
-    // 模型别名映射
+    // 模型别名映射（将客户端常用别名与快照映射至腾讯官方标准模型 ID）
     private val MODEL_ALIASES = mapOf(
+        "deepseek-v4.1-flash-1017" to "deepseek-v4.1-flash",
+        "deepseek-flash-1017" to "deepseek-v4.1-flash",
+        "deepseek-flash" to "deepseek-v4.1-flash",
         "claude-3.7-sonnet" to "default-1.1",
         "claude-4.0-sonnet" to "default-1.2",
         "kimi-k3" to "kimi-k3-1",
-        "kimi-k3.1" to "kimi-k3-1"
+        "kimi-k3.1" to "kimi-k3-1",
+        "hy4-preview-f" to "hy4-preview",
+        "deepseek-v3.2" to "deepseek-v3-2-volc",
+        "gemini-3.8-flash" to "gemini-3.5-flash"
     )
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()

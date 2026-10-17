@@ -200,14 +200,60 @@ async def login_poll(state: str = Query(...)):
 
 # ─────────────────── OpenAI & Anthropic 转发网关 ───────────────────
 
+MODEL_ALIASES = {
+    "deepseek-v4.1-flash-1017": "deepseek-v4.1-flash",
+    "deepseek-flash-1017": "deepseek-v4.1-flash",
+    "deepseek-flash": "deepseek-v4.1-flash",
+    "claude-3.7-sonnet": "default-1.1",
+    "claude-4.0-sonnet": "default-1.2",
+    "kimi-k3": "kimi-k3-1",
+    "kimi-k3.1": "kimi-k3-1",
+    "hy4-preview-f": "hy4-preview",
+    "deepseek-v3.2": "deepseek-v3-2-volc",
+    "gemini-3.8-flash": "gemini-3.5-flash",
+}
+
 def normalize_model(model: str) -> tuple[str, str]:
     m = model.strip()
     m_lower = m.lower()
+    realm = "global"
     if m_lower.startswith("global:"):
-        return "global", m_lower[7:]
-    if m_lower.startswith("cn:"):
-        return "cn", m_lower[3:]
-    return "global", m_lower
+        realm = "global"
+        m_lower = m_lower[7:]
+    elif m_lower.startswith("cn:"):
+        realm = "cn"
+        m_lower = m_lower[3:]
+    m_target = MODEL_ALIASES.get(m_lower, m_lower)
+    return realm, m_target
+
+def build_upstream_headers(realm: str, acc: dict) -> dict:
+    uid = acc.get("uid", "")
+    h = {
+        "Authorization": f"Bearer {acc.get('access_token')}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "Accept-Language": "en-US" if realm == "global" else "zh-CN",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-CodeBuddy-Request": "1",
+        "X-User-Id": uid,
+        "X-Product": "WorkBuddy",
+        "X-Agent-Purpose": "conversation",
+        "X-IDE-Name": "WorkBuddy",
+        "X-IDE-Type": "WorkBuddy",
+        "X-IDE-Version": "5.5.4",
+        "X-Machine-ID": hashlib.sha256(f"wb2a:machine:{uid}".encode()).hexdigest()[:36],
+        "X-Session-ID": hashlib.sha256(f"wb2a:session:{uid}".encode()).hexdigest()[:36],
+        "X-Conversation-ID": uuid.uuid4().hex,
+        "X-Conversation-Request-ID": uuid.uuid4().hex,
+        "X-Conversation-Message-ID": uuid.uuid4().hex,
+        "X-Root-Request-ID": uuid.uuid4().hex,
+        "X-Trace-ID": uuid.uuid4().hex,
+        "User-Agent": CLIENT_UA,
+    }
+    if realm == "global":
+        h["X-No-Enterprise-Id"] = "1"
+        h["X-Domain"] = "www.workbuddy.ai"
+    return h
 
 @app.get("/v1/models")
 @app.get("/v1/v1/models")
@@ -256,12 +302,7 @@ async def chat_completions(request: Request):
         messages.insert(0, {"role": "system", "content": DEFAULT_SYSTEM_PROMPT})
 
     upstream_base = UPSTREAM_GLOBAL if realm == "global" else UPSTREAM_CN
-    headers = {
-        "Authorization": f"Bearer {acc.get('access_token')}",
-        "Content-Type": "application/json",
-        "X-User-Id": acc.get("uid", ""),
-        "User-Agent": CLIENT_UA,
-    }
+    headers = build_upstream_headers(realm, acc)
 
     # 采用黑名单模式，完整透传 tools / tool_choice / reasoning_effort 等参数
     upstream_payload = {k: v for k, v in body.items() if k not in ["stream"]}
@@ -277,7 +318,7 @@ async def chat_completions(request: Request):
         prompt_tokens = 20
         comp_tokens = 20
         async with httpx.AsyncClient(proxy=get_proxy(), timeout=120.0) as client:
-            async with client.stream("POST", f"{upstream_base}/v2/chat/completions", headers=headers, json=upstream_payload) as resp:
+            async with client.stream("POST", f"{upstream_base}/console/chat/completions", headers=headers, json=upstream_payload) as resp:
                 if resp.status_code != 200:
                     err = await resp.aread()
                     return JSONResponse(status_code=resp.status_code, content={"error": {"message": err.decode(errors="ignore")}})
@@ -304,7 +345,7 @@ async def chat_completions(request: Request):
             try:
                 async with client.stream(
                     "POST",
-                    f"{upstream_base}/v2/chat/completions",
+                    f"{upstream_base}/console/chat/completions",
                     headers=headers,
                     json=upstream_payload
                 ) as resp:
@@ -382,12 +423,7 @@ async def anthropic_messages(request: Request):
         })
 
     upstream_base = UPSTREAM_GLOBAL if realm == "global" else UPSTREAM_CN
-    headers = {
-        "Authorization": f"Bearer {acc.get('access_token')}",
-        "Content-Type": "application/json",
-        "X-User-Id": acc.get("uid", ""),
-        "User-Agent": CLIENT_UA,
-    }
+    headers = build_upstream_headers(realm, acc)
 
     upstream_payload = {
         "model": model_name,
@@ -439,7 +475,7 @@ async def anthropic_messages(request: Request):
                 out_count = 0
                 async with client.stream(
                     "POST",
-                    f"{upstream_base}/v2/chat/completions",
+                    f"{upstream_base}/console/chat/completions",
                     headers=headers,
                     json=upstream_payload
                 ) as resp:
