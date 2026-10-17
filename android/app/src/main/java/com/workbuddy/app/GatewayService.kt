@@ -16,7 +16,7 @@ class GatewayService : Service() {
 
     companion object {
         const val CHANNEL_ID = "wb_gateway_channel"
-        const val NOTIF_ID = 8792
+        const val NOTIF_ID = 8800
         @Volatile var isRunning = false
     }
 
@@ -30,7 +30,7 @@ class GatewayService : Service() {
         createNotificationChannel()
         startForegroundServiceNotification()
 
-        server = LocalGatewayServer(applicationContext, 8792)
+        server = LocalGatewayServer(applicationContext, 8800)
         server?.start()
         isRunning = true
     }
@@ -58,7 +58,7 @@ class GatewayService : Service() {
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("WorkBuddy 运行中")
-            .setContentText("本地网关端口 :8792 已就绪")
+            .setContentText("本地网关端口 :8800 已就绪")
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentIntent(pendingIntent)
             .setOngoing(true)

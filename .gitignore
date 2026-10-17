@@ -1,0 +1,5 @@
+.venv/
+bin/
+auths/
+data/
+config.json

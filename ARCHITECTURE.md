@@ -21,7 +21,7 @@
 
 ### 🟢 版本一：纯安卓独立版 (`android/`)
 - **运行环境**：Android 7.0 ~ Android 14+ (ARM64-v8a)
-- **底层网关**：`LocalGatewayServer.kt`（Kotlin 原生嵌入式 HTTP 服务，默认端口 `8792`）
+- **底层网关**：`LocalGatewayServer.kt`（Kotlin 原生嵌入式 HTTP 服务，默认端口 `8800`）
 - **上游通信**：`TencentGateway.kt`（基于 Google/Square 标准 `OkHttp3` 驱动，支持 HTTP/2 长连接与 SSE 流式输出）
 - **账号持久化**：`AccountVault.kt`（Android 原生存储）
 - **后台守护**：`GatewayService.kt`（前台服务 + 通知栏守护，防止系统休眠）
@@ -34,7 +34,7 @@
   - OpenAI 兼容：`/v1/chat/completions`、`/v1/models`
   - Anthropic 兼容：`/v1/messages`
   - Web 控制台：`/`、`/m`
-- **极速启动**：`bash linux/start.sh` 或 `python3 linux/main.py --port 8792`
+- **极速启动**：`bash linux/start.sh` 或 `python3 linux/main.py --port 8800`
 
 ---
 

@@ -1,4 +1,4 @@
-// WorkBuddy Mobile 交互逻辑 - 同源直连 (http://127.0.0.1:7863)
+// WorkBuddy Mobile 交互逻辑 - 同源直连 (http://127.0.0.1:8800)
 
 let currentTab = 'overview';
 let activePollTimer = null;
@@ -247,7 +247,8 @@ async function loadKeys() {
 }
 
 function copyBaseUrl() {
-  copyText(`${window.location.origin}/v1`);
+  const base = window.location.origin.startsWith('http') ? window.location.origin : 'http://127.0.0.1:8800';
+  copyText(`${base}/v1`);
 }
 
 // 4. 即时对话工作台 (直接调用本地引擎流式 SSE)

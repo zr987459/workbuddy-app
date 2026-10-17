@@ -63,7 +63,7 @@ class MainActivity : AppCompatActivity() {
         Thread {
             for (i in 1..25) {
                 try {
-                    val s = Socket("127.0.0.1", 8792)
+                    val s = Socket("127.0.0.1", 8800)
                     s.close()
                     break
                 } catch (e: Exception) {
@@ -72,7 +72,7 @@ class MainActivity : AppCompatActivity() {
             }
             handler.post {
                 // 直接访问本地嵌入式原生服务，100% 同源，零跨域阻断
-                webView.loadUrl("http://127.0.0.1:8792/")
+                webView.loadUrl("http://127.0.0.1:8800/")
             }
         }.start()
     }

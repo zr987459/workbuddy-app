@@ -18,7 +18,6 @@
       </div>
     </div>
     <div style="display: flex; align-items: center; gap: 8px;">
-      <button class="btn btn-outline btn-sm" onclick="window.location.href='http://127.0.0.1:7863/panel/'" style="font-size: 11px; padding: 2px 8px; min-height: 28px;">完整后台</button>
       <div class="status-pill" id="headerStatus">
         <span class="status-dot"></span>
         <span id="headerStatusText">连接中...</span>
@@ -53,7 +52,7 @@
         <button class="btn btn-outline btn-sm" onclick="loadOverview()">刷新</button>
       </div>
       <div style="font-size: 13px; color: var(--text-muted); line-height: 1.8;">
-        <div>📡 本地引擎：<span id="infoCoreUrl" style="font-family: var(--font-mono); color: var(--text-main);">http://127.0.0.1:7863</span></div>
+        <div>📡 本地网关：<span id="infoCoreUrl" style="font-family: var(--font-mono); color: var(--text-main);">http://127.0.0.1:8800</span></div>
         <div>🚀 国际版支持：<span style="color: var(--primary); font-weight: 600;">已就绪 (Global / workbuddy.ai)</span></div>
         <div>🔐 API 接口：<span style="font-family: var(--font-mono); color: var(--accent);">/v1/chat/completions</span></div>
       </div>
@@ -91,7 +90,7 @@
     <div class="card" style="background: rgba(56, 189, 248, 0.05); border-color: rgba(56, 189, 248, 0.2); margin-bottom: 16px;">
       <div style="font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 4px;">第三方客户端配置地址 (Base URL)</div>
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-        <span id="baseUrlDisplay" style="font-family: var(--font-mono); font-size: 13px; color: var(--text-main);">http://127.0.0.1:7863/v1</span>
+        <span id="baseUrlDisplay" style="font-family: var(--font-mono); font-size: 13px; color: var(--text-main);">http://127.0.0.1:8800/v1</span>
         <button class="btn btn-outline btn-sm" onclick="copyBaseUrl()">复制</button>
       </div>
     </div>

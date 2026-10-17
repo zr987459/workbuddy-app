@@ -50,21 +50,23 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.2
-          name: "WorkBuddy App v1.0.2 (纯安卓独立版)"
+          tag_name: v1.0.3
+          name: "WorkBuddy App v1.0.3 (纯安卓独立版)"
           target_commitish: ${{ github.sha }}
           prerelease: false
           files: dist/WorkBuddyApp.apk
           body: |
-            ### 📱 WorkBuddy App (纯安卓独立版 v1.0.2)
+            ### 📱 WorkBuddy App (纯安卓独立版 v1.0.3)
 
-            - 🚀 **全面支持 Anthropic Messages 协议**：支持 `/v1/messages` 接口与完整 SSE 流式转换，彻底解决第三方客户端（如 Antigravity / Claude 客户端）调用报错！
-            - ⚡ **HTTP/1.1 分块传输编码 (Chunked Encoding)**：内置原生流式打字机采用标准分块流传输，彻底解决移动端对话卡在「思考中」无法吐字的问题！
-            - 📂 **双向自动识别账号凭证**：自动联动扫描内部存储与 `auths/` 目录凭据，无论从何处授权入库均能即刻生效调用！
-            - 📋 **官方授权链接复制**：支持一键复制官方登录链接，便于在任意浏览器中打开登录。
+            - 🔌 **端口迁移至 8800**：默认监听端口更新为 `8800`，彻底杜绝与 Antigravity+ (8792) 的端口冲突！
+            - 🚀 **全面支持 Anthropic Messages 双模**：
+              - 非流式单次响应 (`stream: false`)：针对第三方客户端（如 Antigravity / Claude 客户端）的连接性测试进行完整 JSON 响应适配；
+              - 流式分块传输 (`stream: true`)：严格对齐 Anthropic 官方规范下发 `message_start`, `content_block_delta`, `message_delta`（包含完整的 `usage` 字段），彻底杜绝客户端 undefined 崩溃。
+            - 🛡️ **对齐腾讯官方指纹与双端点回退**：自动注入 `X-Conversation-ID`、`X-Machine-ID`、`X-Session-ID` 与用量归属头，并在 `/console` 与 `/v2` 端点间智能兜底，避开渠道校验拦截。
+            - 纯净离线自洽：彻底清除旧版 7863 端口与外部依赖，纯 Kotlin 原生引擎独立运行。
             - 🔌 **通用 API 导出**：
-              - 本地 OpenAI 接口：`http://127.0.0.1:8792/v1/chat/completions`
-              - 本地 Anthropic 接口：`http://127.0.0.1:8792/v1/messages`
+              - 本地 OpenAI 接口：`http://127.0.0.1:8800/v1/chat/completions`
+              - 本地 Anthropic 接口：`http://127.0.0.1:8800/v1/messages`
 
             *点击下方 Assets 里的 `WorkBuddyApp.apk` 即可下载安装！*
         env:

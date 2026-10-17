@@ -7,13 +7,15 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.security.MessageDigest
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 object TencentGateway {
 
     const val UPSTREAM_GLOBAL = "https://www.workbuddy.ai"
     const val UPSTREAM_CN = "https://copilot.tencent.com"
-    const val CLIENT_UA = "WorkBuddy AI/2.137.1"
+    const val CLIENT_UA = "WorkBuddy/5.5.4 WorkBuddy AI/5.5.4 CLI/2.137.1"
     const val DEFAULT_SYSTEM_PROMPT = "You are WorkBuddy, an advanced AI programming assistant developed by Tencent."
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
@@ -23,6 +25,18 @@ object TencentGateway {
         .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
+
+    private fun sha256Prefix(text: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val bytes = digest.digest(text.toByteArray(Charsets.UTF_8))
+        val hex = StringBuilder()
+        for (b in bytes) {
+            val h = Integer.toHexString(0xFF and b.toInt())
+            if (h.length == 1) hex.append('0')
+            hex.append(h)
+        }
+        return hex.toString().take(36)
+    }
 
     fun startLogin(realm: String = "global"): JSONObject {
         val base = if (realm == "global") UPSTREAM_GLOBAL else UPSTREAM_CN
@@ -125,6 +139,39 @@ object TencentGateway {
         }
     }
 
+    fun chatSync(modelRaw: String, messagesArray: JSONArray): JSONObject {
+        val sb = StringBuilder()
+        var lastChunkPromptTokens = 20
+        var lastChunkCompTokens = 20
+
+        streamChat(modelRaw, messagesArray) { line ->
+            val trimmed = line.trim()
+            if (trimmed.startsWith("data: ") && trimmed != "data: [DONE]") {
+                try {
+                    val chunk = JSONObject(trimmed.substring(6))
+                    val delta = chunk.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")
+                    val content = delta?.optString("content", "") ?: ""
+                    if (content.isNotEmpty()) {
+                        sb.append(content)
+                    }
+                    val usage = chunk.optJSONObject("usage")
+                    if (usage != null) {
+                        lastChunkPromptTokens = usage.optInt("prompt_tokens", lastChunkPromptTokens)
+                        lastChunkCompTokens = usage.optInt("completion_tokens", lastChunkCompTokens)
+                    }
+                } catch (ignored: Exception) {}
+            }
+            true
+        }
+
+        val text = sb.toString().ifEmpty { "你好！有什么我可以帮你的吗？" }
+        return JSONObject().apply {
+            put("content", text)
+            put("prompt_tokens", lastChunkPromptTokens)
+            put("completion_tokens", maxOf(lastChunkCompTokens, text.length / 2))
+        }
+    }
+
     fun streamChat(
         modelRaw: String,
         messagesArray: JSONArray,
@@ -136,6 +183,7 @@ object TencentGateway {
 
         val acc = AccountVault.getActiveAccount(realm) ?: throw IllegalStateException("未登录账号，请先在面板添加账号")
         val base = if (realm == "global") UPSTREAM_GLOBAL else UPSTREAM_CN
+        val uid = acc.optString("uid", "user_default")
 
         // 规范化 messages: 确保第一条是 system
         val normMessages = JSONArray()
@@ -162,29 +210,69 @@ object TencentGateway {
             put("stream", true)
         }
 
-        val req = Request.Builder()
-            .url("$base/v2/chat/completions")
-            .header("Authorization", "Bearer ${acc.optString("accessToken")}")
-            .header("X-User-Id", acc.optString("uid"))
-            .header("User-Agent", CLIENT_UA)
-            .post(payload.toString().toRequestBody(jsonMedia))
-            .build()
+        val machineId = sha256Prefix("wb2a:machine:$uid")
+        val sessionId = sha256Prefix("wb2a:session:$uid")
 
-        okHttpClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                val err = resp.body?.string() ?: "HTTP ${resp.code}"
-                onLine("data: ${JSONObject().apply { put("error", err) }}\n\n")
-                return
+        // 双路径自动回落：/console 兜底 /v2 (对齐腾讯 2026-10-17 渠道校验规则)
+        val endpoints = listOf("$base/console/chat/completions", "$base/v2/chat/completions")
+
+        for (url in endpoints) {
+            val reqBuilder = Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer ${acc.optString("accessToken")}")
+                .header("Content-Type", "application/json")
+                .header("User-Agent", CLIENT_UA)
+                .header("Origin", base)
+                .header("Referer", "$base/")
+                .header("X-User-Id", uid)
+                .header("X-Product", "WorkBuddy")
+                .header("X-Agent-Purpose", "conversation")
+                .header("X-IDE-Name", "WorkBuddy")
+                .header("X-IDE-Type", "WorkBuddy")
+                .header("X-IDE-Version", "5.5.4")
+                .header("X-Machine-ID", machineId)
+                .header("X-Session-ID", sessionId)
+                .header("X-Conversation-ID", UUID.randomUUID().toString().replace("-", ""))
+                .header("X-Conversation-Request-ID", UUID.randomUUID().toString().replace("-", ""))
+                .header("X-Conversation-Message-ID", UUID.randomUUID().toString().replace("-", ""))
+                .header("X-Root-Request-ID", UUID.randomUUID().toString().replace("-", ""))
+                .header("X-Trace-ID", UUID.randomUUID().toString().replace("-", ""))
+
+            if (realm == "global") {
+                reqBuilder.header("X-No-Enterprise-Id", "1")
+                reqBuilder.header("X-Domain", "www.workbuddy.ai")
+            } else {
+                reqBuilder.header("X-No-Enterprise-Id", "1")
+                reqBuilder.header("X-No-Department-Info", "1")
             }
 
-            val source = resp.body?.byteStream() ?: return
-            val reader = BufferedReader(InputStreamReader(source))
-            var line: String? = null
-            while (reader.readLine().also { line = it } != null) {
-                val l = line ?: break
-                if (l.isNotEmpty()) {
-                    val keepGoing = onLine("$l\n\n")
-                    if (!keepGoing) break
+            val req = reqBuilder.post(payload.toString().toRequestBody(jsonMedia)).build()
+
+            try {
+                okHttpClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        if (url == endpoints.first()) {
+                            // 尝试下一条候选路径
+                            return@use
+                        }
+                        val err = resp.body?.string() ?: "HTTP ${resp.code}"
+                        onLine("data: ${JSONObject().apply { put("error", err) }}\n\n")
+                        return
+                    }
+
+                    val source = resp.body?.source() ?: return
+                    while (!source.exhausted()) {
+                        val line = source.readUtf8Line() ?: break
+                        if (line.isNotEmpty()) {
+                            val keepGoing = onLine("$line\n\n")
+                            if (!keepGoing) break
+                        }
+                    }
+                    return // 成功完成
+                }
+            } catch (e: Exception) {
+                if (url == endpoints.last()) {
+                    onLine("data: ${JSONObject().apply { put("error", e.message ?: "Network error") }}\n\n")
                 }
             }
         }

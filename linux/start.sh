@@ -3,7 +3,7 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-PORT="${PORT:-8792}"
+PORT="${PORT:-8800}"
 HOST="${HOST:-0.0.0.0}"
 
 if [ ! -d ".venv" ]; then
