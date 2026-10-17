@@ -22,6 +22,7 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                 serverSocket = ServerSocket(port, 50, InetAddress.getByName("127.0.0.1"))
                 while (isRunning) {
                     val client = serverSocket?.accept() ?: break
+                    client.tcpNoDelay = true // 减少小包网络延迟
                     thread { handleConnection(client) }
                 }
             } catch (e: Exception) {
@@ -37,14 +38,49 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
         } catch (ignored: Exception) {}
     }
 
+    private fun readHeaderBlock(input: InputStream, max: Int = 64 * 1024): ByteArray? {
+        val buf = ByteArrayOutputStream(512)
+        var lineLen = 0
+        while (true) {
+            val b = input.read()
+            if (b == -1) return if (buf.size() == 0) null else throw EOFException("headers truncated")
+            if (buf.size() >= max) throw IOException("request header too large")
+            buf.write(b)
+            when (b) {
+                '\n'.code -> {
+                    if (lineLen == 0) return buf.toByteArray() // 遇到空行即头部结束
+                    lineLen = 0
+                }
+                '\r'.code -> {}
+                else -> lineLen++
+            }
+        }
+    }
+
+    private fun readRequestBody(input: InputStream, contentLength: Int): String {
+        if (contentLength <= 0) return ""
+        val buf = ByteArray(contentLength)
+        var off = 0
+        while (off < contentLength) {
+            val n = input.read(buf, off, contentLength - off)
+            if (n < 0) throw EOFException("client closed: got $off / $contentLength bytes")
+            off += n
+        }
+        return String(buf, Charsets.UTF_8)
+    }
+
     private fun handleConnection(client: Socket) {
         try {
-            val input = client.getInputStream()
-            val reader = BufferedReader(InputStreamReader(input))
+            // 全连接统一使用一个 BufferedInputStream，严防 Reader 预读吃掉 Body 字节
+            val input = BufferedInputStream(client.getInputStream())
             val output = client.getOutputStream()
 
-            val requestLine = reader.readLine() ?: return client.close()
-            val parts = requestLine.split(" ")
+            val rawHead = readHeaderBlock(input) ?: return client.close()
+            val headLines = String(rawHead, Charsets.ISO_8859_1).split('\n')
+                .map { it.removeSuffix("\r") }.filter { it.isNotEmpty() }
+            if (headLines.isEmpty()) return client.close()
+
+            val parts = headLines[0].split(' ')
             if (parts.size < 2) return client.close()
 
             val method = parts[0].uppercase()
@@ -52,16 +88,14 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
             val path = fullPath.substringBefore("?")
             val query = fullPath.substringAfter("?", "")
 
-            // 读取 Headers
-            var contentLength = 0
-            var headerLine: String? = null
-            while (reader.readLine().also { headerLine = it } != null) {
-                val h = headerLine ?: break
-                if (h.isEmpty()) break
-                val lower = h.lowercase()
-                if (lower.startsWith("content-length:")) {
-                    contentLength = lower.substringAfter(":").trim().toIntOrNull() ?: 0
-                }
+            // 解析 Headers (小写标准化)
+            val headers = HashMap<String, String>()
+            for (l in headLines.drop(1)) {
+                val i = l.indexOf(':')
+                if (i <= 0) continue
+                val k = l.substring(0, i).trim().lowercase()
+                val v = l.substring(i + 1).trim()
+                headers[k] = headers[k]?.let { "$it, $v" } ?: v
             }
 
             // 处理 OPTIONS 预检请求
@@ -71,23 +105,15 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                         "Access-Control-Allow-Methods: GET, POST, OPTIONS, DELETE\r\n" +
                         "Access-Control-Allow-Headers: *\r\n" +
                         "Connection: close\r\n\r\n"
-                output.write(preflight.toByteArray())
+                output.write(preflight.toByteArray(Charsets.US_ASCII))
                 output.flush()
                 client.close()
                 return
             }
 
-            // 读取 Body
-            val body = if (contentLength > 0) {
-                val buf = CharArray(contentLength)
-                var read = 0
-                while (read < contentLength) {
-                    val r = reader.read(buf, read, contentLength - read)
-                    if (r == -1) break
-                    read += r
-                }
-                String(buf, 0, read)
-            } else ""
+            // 读取 Body：使用精确字节数读取，彻底根除多字节中文卡死挂起
+            val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
+            val body = readRequestBody(input, contentLength)
 
             // 路由派发
             when {
@@ -167,8 +193,9 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                 "Content-Length: ${bytes.size}\r\n" +
                 "Access-Control-Allow-Origin: *\r\n" +
                 "Connection: close\r\n\r\n"
-        output.write(header.toByteArray())
+        output.write(header.toByteArray(Charsets.US_ASCII))
         output.write(bytes)
+        output.flush()
     }
 
     private fun writeChunk(output: OutputStream, chunkStr: String) {
@@ -226,21 +253,27 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                 val sseHeader = "HTTP/1.1 200 OK\r\n" +
                         "Content-Type: text/event-stream; charset=utf-8\r\n" +
                         "Cache-Control: no-cache, no-transform\r\n" +
+                        "X-Accel-Buffering: no\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
                         "Access-Control-Allow-Origin: *\r\n" +
                         "Connection: keep-alive\r\n\r\n"
-                output.write(sseHeader.toByteArray())
+                output.write(sseHeader.toByteArray(Charsets.US_ASCII))
                 output.flush()
 
-                TencentGateway.streamChat(model, messages) { line ->
-                    try {
-                        writeChunk(output, line)
-                        true
-                    } catch (e: Exception) {
-                        false
+                try {
+                    TencentGateway.streamChat(model, messages) { line ->
+                        try {
+                            writeChunk(output, line)
+                            true
+                        } catch (e: Exception) {
+                            false
+                        }
                     }
+                } catch (e: Exception) {
+                    writeChunk(output, "data: ${JSONObject().apply { put("error", e.message) }}\n\n")
+                } finally {
+                    endChunked(output)
                 }
-                endChunked(output)
             }
         } catch (e: Exception) {
             sendErrorJson(output, 500, e.message ?: "Chat failed")
@@ -338,82 +371,97 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                         "Transfer-Encoding: chunked\r\n" +
                         "Access-Control-Allow-Origin: *\r\n" +
                         "Connection: keep-alive\r\n\r\n"
-                output.write(sseHeader.toByteArray())
+                output.write(sseHeader.toByteArray(Charsets.US_ASCII))
                 output.flush()
 
-                // message_start: 包含完整的 usage 与 stop_reason 字段，彻底杜绝 undefined 崩溃
-                writeChunk(output, "event: message_start\ndata: ${JSONObject().apply {
-                    put("type", "message_start")
-                    put("message", JSONObject().apply {
-                        put("id", msgId)
-                        put("type", "message")
-                        put("role", "assistant")
-                        put("content", JSONArray())
-                        put("model", modelRaw)
-                        put("stop_reason", JSONObject.NULL)
-                        put("stop_sequence", JSONObject.NULL)
-                        put("usage", JSONObject().apply {
-                            put("input_tokens", 20)
-                            put("output_tokens", 0)
+                try {
+                    // message_start: 包含完整的 usage 与 stop_reason 字段
+                    writeChunk(output, "event: message_start\ndata: ${JSONObject().apply {
+                        put("type", "message_start")
+                        put("message", JSONObject().apply {
+                            put("id", msgId)
+                            put("type", "message")
+                            put("role", "assistant")
+                            put("content", JSONArray())
+                            put("model", modelRaw)
+                            put("stop_reason", JSONObject.NULL)
+                            put("stop_sequence", JSONObject.NULL)
+                            put("usage", JSONObject().apply {
+                                put("input_tokens", 20)
+                                put("output_tokens", 0)
+                            })
                         })
-                    })
-                }}\n\n")
+                    }}\n\n")
 
-                writeChunk(output, "event: content_block_start\ndata: ${JSONObject().apply {
-                    put("type", "content_block_start")
-                    put("index", 0)
-                    put("content_block", JSONObject().apply {
-                        put("type", "text")
-                        put("text", "")
-                    })
-                }}\n\n")
+                    writeChunk(output, "event: content_block_start\ndata: ${JSONObject().apply {
+                        put("type", "content_block_start")
+                        put("index", 0)
+                        put("content_block", JSONObject().apply {
+                            put("type", "text")
+                            put("text", "")
+                        })
+                    }}\n\n")
 
-                var outputTokenCount = 0
+                    writeChunk(output, "event: ping\ndata: ${JSONObject().apply { put("type", "ping") }}\n\n")
 
-                TencentGateway.streamChat(modelRaw, openaiMessages) { line ->
-                    val trimmed = line.trim()
-                    if (trimmed.isNotEmpty() && trimmed != "data: [DONE]" && trimmed.startsWith("data: ")) {
-                        try {
-                            val chunk = JSONObject(trimmed.substring(6))
-                            val delta = chunk.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")
-                            val textDelta = delta?.optString("content", "") ?: ""
-                            if (textDelta.isNotEmpty()) {
-                                outputTokenCount++
-                                writeChunk(output, "event: content_block_delta\ndata: ${JSONObject().apply {
-                                    put("type", "content_block_delta")
-                                    put("index", 0)
-                                    put("delta", JSONObject().apply {
-                                        put("type", "text_delta")
-                                        put("text", textDelta)
-                                    })
-                                }}\n\n")
-                            }
-                        } catch (ignored: Exception) {}
+                    var outputTokenCount = 0
+
+                    TencentGateway.streamChat(modelRaw, openaiMessages) { line ->
+                        val trimmed = line.trim()
+                        if (trimmed.isNotEmpty() && trimmed != "data: [DONE]" && trimmed.startsWith("data: ")) {
+                            try {
+                                val chunk = JSONObject(trimmed.substring(6))
+                                val delta = chunk.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")
+                                val textDelta = delta?.optString("content", "") ?: ""
+                                if (textDelta.isNotEmpty()) {
+                                    outputTokenCount++
+                                    writeChunk(output, "event: content_block_delta\ndata: ${JSONObject().apply {
+                                        put("type", "content_block_delta")
+                                        put("index", 0)
+                                        put("delta", JSONObject().apply {
+                                            put("type", "text_delta")
+                                            put("text", textDelta)
+                                        })
+                                    }}\n\n")
+                                }
+                            } catch (ignored: Exception) {}
+                        }
+                        true
                     }
-                    true
+
+                    writeChunk(output, "event: content_block_stop\ndata: ${JSONObject().apply {
+                        put("type", "content_block_stop")
+                        put("index", 0)
+                    }}\n\n")
+
+                    writeChunk(output, "event: message_delta\ndata: ${JSONObject().apply {
+                        put("type", "message_delta")
+                        put("delta", JSONObject().apply {
+                            put("stop_reason", "end_turn")
+                            put("stop_sequence", JSONObject.NULL)
+                        })
+                        put("usage", JSONObject().apply {
+                            put("output_tokens", maxOf(outputTokenCount, 1))
+                        })
+                    }}\n\n")
+
+                    writeChunk(output, "event: message_stop\ndata: ${JSONObject().apply {
+                        put("type", "message_stop")
+                    }}\n\n")
+                } catch (e: Exception) {
+                    // 中途出错：发送 error 事件通知客户端
+                    try {
+                        writeChunk(output, "event: error\ndata: ${JSONObject().apply {
+                            put("type", "error")
+                            put("error", JSONObject().apply {
+                                put("type", "upstream_error")
+                                put("message", e.message ?: "upstream streaming failed")
+                            })
+                        }}\n\n")
+                    } catch (ignored: Exception) {}
+                } finally {
+                    endChunked(output)
                 }
-
-                writeChunk(output, "event: content_block_stop\ndata: ${JSONObject().apply {
-                    put("type", "content_block_stop")
-                    put("index", 0)
-                }}\n\n")
-
-                writeChunk(output, "event: message_delta\ndata: ${JSONObject().apply {
-                    put("type", "message_delta")
-                    put("delta", JSONObject().apply {
-                        put("stop_reason", "end_turn")
-                        put("stop_sequence", JSONObject.NULL)
-                    })
-                    put("usage", JSONObject().apply {
-                        put("output_tokens", maxOf(outputTokenCount, 1))
-                    })
-                }}\n\n")
-
-                writeChunk(output, "event: message_stop\ndata: ${JSONObject().apply {
-                    put("type", "message_stop")
-                }}\n\n")
-
-                endChunked(output)
             }
         } catch (e: Exception) {
             sendErrorJson(output, 500, e.message ?: "Anthropic request failed")
@@ -428,8 +476,9 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                 "Content-Length: ${bytes.size}\r\n" +
                 "Access-Control-Allow-Origin: *\r\n" +
                 "Connection: close\r\n\r\n"
-        output.write(header.toByteArray())
+        output.write(header.toByteArray(Charsets.US_ASCII))
         output.write(bytes)
+        output.flush()
     }
 
     private fun serveStaticAsset(output: OutputStream, path: String) {
@@ -459,7 +508,8 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                 "Content-Length: ${bytes.size}\r\n" +
                 "Access-Control-Allow-Origin: *\r\n" +
                 "Connection: close\r\n\r\n"
-        output.write(header.toByteArray())
+        output.write(header.toByteArray(Charsets.US_ASCII))
         output.write(bytes)
+        output.flush()
     }
 }

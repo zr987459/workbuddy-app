@@ -143,12 +143,16 @@ object TencentGateway {
         val sb = StringBuilder()
         var lastChunkPromptTokens = 20
         var lastChunkCompTokens = 20
+        var upstreamError: String? = null
 
         streamChat(modelRaw, messagesArray) { line ->
             val trimmed = line.trim()
             if (trimmed.startsWith("data: ") && trimmed != "data: [DONE]") {
                 try {
                     val chunk = JSONObject(trimmed.substring(6))
+                    if (chunk.has("error")) {
+                        upstreamError = chunk.optString("error")
+                    }
                     val delta = chunk.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")
                     val content = delta?.optString("content", "") ?: ""
                     if (content.isNotEmpty()) {
@@ -164,7 +168,15 @@ object TencentGateway {
             true
         }
 
-        val text = sb.toString().ifEmpty { "你好！有什么我可以帮你的吗？" }
+        if (upstreamError != null) {
+            throw IOException("Upstream error: $upstreamError")
+        }
+
+        val text = sb.toString()
+        if (text.isEmpty()) {
+            throw IOException("Upstream returned empty completion")
+        }
+
         return JSONObject().apply {
             put("content", text)
             put("prompt_tokens", lastChunkPromptTokens)
