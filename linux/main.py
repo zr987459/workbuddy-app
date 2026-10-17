@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -95,7 +95,7 @@ async def get_overview():
         "healthy": healthy,
         "total": len(_accounts),
         "accounts": _accounts,
-        "auth_required": false,
+        "auth_required": False,
         "version": "1.0.0-standalone"
     }
 
