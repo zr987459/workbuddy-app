@@ -50,22 +50,22 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.4
-          name: "WorkBuddy App v1.0.4 (纯安卓独立版)"
+          tag_name: v1.0.5
+          name: "WorkBuddy App v1.0.5 (纯安卓独立版)"
           target_commitish: ${{ github.sha }}
           prerelease: false
           files: dist/WorkBuddyApp.apk
           body: |
-            ### 📱 WorkBuddy App (纯安卓独立版 v1.0.4)
+            ### 📱 WorkBuddy App (纯安卓独立版 v1.0.5)
 
-            - 🛡️ **彻底根除中文 UTF-8 请求死锁卡死**：采用 Hark 架构方案，全连接统一使用 `BufferedInputStream` 按 RFC 规范精确字节流读满，杜绝字符与字节混淆导致的多字节中文死等超时！
-            - ⚡ **SSE 架构全链路加固**：
-              - 引入 `tcpNoDelay = true`，大幅减少流式小包延迟；
-              - 严格按 UTF-8 字节计算 chunk 分块大小，每帧即时 `flush()`；
-              - 增加 `ping` 保活事件，异常时优雅下发 `event: error`；
-              - 无论正常完成或异常中断均确保输出 `0\r\n\r\n` 终止块，杜绝客户端挂起。
-            - 🚫 **杜绝虚假回复**：同步请求 (`chatSync`) 严格透传上游真实状态码与错误信息，坚决不编造假响应。
-            - ⏹ **新增对话控制**：支持「⏹ 停止生成」实时掐断流传输与「🧹 新对话」一键重置上下文。
+            - 🖼️ **全面支持多模态图片识别 (OpenAI + Anthropic)**：
+              - 彻底修复图片块被误当作纯字符串丢弃的问题；
+              - OpenAI 协议原生支持 `image_url`（Base64 / URL）；
+              - Anthropic 协议自动将 `type: image` 图片源解析并转换为标准多模态图片块下发上游，图片识别一触即发！
+            - 🔋 **后台常驻与按需 WakeLock（锁屏/切后台不挂起）**：
+              - 采用官方 `startForegroundService` + `START_STICKY` 自拉起守护；
+              - 引入按需唤醒锁（请求期间自动 acquire 续期，空闲时自动 release 彻底省电），锁屏或退回桌面长输出绝不中断；
+            - 🛡️ **对齐 Hark 架构**：精确字节流读满、TCP_NODELAY、实时 Flush 与双端点智能兜底。
             - 🔌 **通用 API 导出**：
               - 本地 OpenAI 接口：`http://127.0.0.1:8800/v1/chat/completions`
               - 本地 Anthropic 接口：`http://127.0.0.1:8800/v1/messages`

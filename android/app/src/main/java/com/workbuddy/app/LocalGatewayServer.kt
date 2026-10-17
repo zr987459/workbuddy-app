@@ -9,7 +9,12 @@ import java.net.ServerSocket
 import java.net.Socket
 import kotlin.concurrent.thread
 
-class LocalGatewayServer(private val context: Context, private val port: Int = 8800) {
+class LocalGatewayServer(
+    private val context: Context,
+    private val port: Int = 8800,
+    private val onBusy: () -> Unit = {},
+    private val onIdle: () -> Unit = {}
+) {
 
     private var serverSocket: ServerSocket? = null
     @Volatile private var isRunning = false
@@ -23,7 +28,14 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                 while (isRunning) {
                     val client = serverSocket?.accept() ?: break
                     client.tcpNoDelay = true // 减少小包网络延迟
-                    thread { handleConnection(client) }
+                    thread {
+                        onBusy()
+                        try {
+                            handleConnection(client)
+                        } finally {
+                            onIdle()
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 // server closed
@@ -128,7 +140,7 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                         put("total", accounts.length())
                         put("accounts", accounts)
                         put("auth_required", false)
-                        put("version", "1.0.3-android")
+                        put("version", "1.0.5-android")
                     }
                     sendJsonResponse(output, 200, json.toString())
                 }
@@ -163,12 +175,12 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                     sendJsonResponse(output, 200, json.toString())
                 }
 
-                // 5. API: OpenAI 标准流式与非流式对话
+                // 5. API: OpenAI 标准流式与非流式对话 (天然支持多模态 image_url 数组)
                 path == "/v1/chat/completions" || path == "/v1/v1/chat/completions" -> {
                     handleOpenAiChat(output, body)
                 }
 
-                // 6. API: Anthropic Messages 协议全功能支持（流式与非流式）
+                // 6. API: Anthropic Messages 协议全功能支持（转换图片块为 OpenAI image_url）
                 path == "/v1/messages" || path == "/v1/v1/messages" -> {
                     handleAnthropicMessages(output, body)
                 }
@@ -280,13 +292,53 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
         }
     }
 
+    /**
+     * Anthropic content → OpenAI content
+     * - 纯文本：输出字符串
+     * - 含图片：输出 OpenAI 多模态数组 [{type:text},{type:image_url,image_url:{url}}]
+     */
+    private fun anthropicContentToOpenAi(content: Any?): Any {
+        if (content is String) return content
+        if (content !is JSONArray) return ""
+
+        val parts = JSONArray()
+        var hasImage = false
+        val text = StringBuilder()
+
+        for (j in 0 until content.length()) {
+            val part = content.optJSONObject(j) ?: continue
+            when (part.optString("type")) {
+                "text" -> {
+                    val t = part.optString("text")
+                    text.append(t)
+                    parts.put(JSONObject().put("type", "text").put("text", t))
+                }
+                "image" -> {
+                    val src = part.optJSONObject("source") ?: continue
+                    val url = when (src.optString("type")) {
+                        "base64" -> "data:${src.optString("media_type", "image/png")};base64,${src.optString("data")}"
+                        "url" -> src.optString("url")
+                        else -> null
+                    }
+                    if (!url.isNullOrEmpty()) {
+                        hasImage = true
+                        parts.put(JSONObject()
+                            .put("type", "image_url")
+                            .put("image_url", JSONObject().put("url", url)))
+                    }
+                }
+            }
+        }
+        return if (hasImage) parts else text.toString()
+    }
+
     private fun handleAnthropicMessages(output: OutputStream, bodyStr: String) {
         try {
             val json = JSONObject(bodyStr)
             val isStream = json.optBoolean("stream", false)
             val modelRaw = json.optString("model", "deepseek-v4.1-flash")
 
-            // 转换 Anthropic 格式为 OpenAI messages
+            // 转换 Anthropic 格式为 OpenAI messages (完整保留多模态图片块)
             val openaiMessages = JSONArray()
             val systemObj = json.opt("system")
             val systemPrompt = when (systemObj) {
@@ -313,23 +365,9 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                 val m = messagesArr.getJSONObject(i)
                 val role = m.optString("role", "user")
                 val contentObj = m.opt("content")
-                val textContent = when (contentObj) {
-                    is String -> contentObj
-                    is JSONArray -> {
-                        val sb = StringBuilder()
-                        for (j in 0 until contentObj.length()) {
-                            val part = contentObj.optJSONObject(j)
-                            if (part != null && part.optString("type") == "text") {
-                                sb.append(part.optString("text"))
-                            }
-                        }
-                        sb.toString()
-                    }
-                    else -> ""
-                }
                 openaiMessages.put(JSONObject().apply {
                     put("role", role)
-                    put("content", textContent)
+                    put("content", anthropicContentToOpenAi(contentObj))
                 })
             }
 

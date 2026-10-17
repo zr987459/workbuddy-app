@@ -309,10 +309,35 @@ async def chat_completions(request: Request):
 
         return StreamingResponse(stream_proxy(), media_type="text/event-stream")
 
+def anthropic_content_to_openai(content: Any) -> Any:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    has_image = False
+    text_buf = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        ptype = part.get("type")
+        if ptype == "text":
+            t = part.get("text", "")
+            text_buf.append(t)
+            parts.append({"type": "text", "text": t})
+        elif ptype == "image":
+            src = part.get("source") or {}
+            media = src.get("media_type") or "image/png"
+            data = src.get("data") or ""
+            if data:
+                has_image = True
+                parts.append({"type": "image_url", "image_url": {"url": f"data:{media};base64,{data}"}})
+    return parts if has_image else "".join(text_buf)
+
 @app.post("/v1/messages")
 @app.post("/v1/v1/messages")
 async def anthropic_messages(request: Request):
-    """Anthropic 协议全兼容（流式 + 非流式单次响应，包含完整的官方 usage 字段）。"""
+    """Anthropic 协议全兼容（流式 + 非流式单次响应，包含完整的官方 usage 字段与多模态图片块）。"""
     body = await request.json()
     is_stream = body.get("stream", False)
     model_raw = body.get("model", "deepseek-v4.1-flash")
@@ -338,10 +363,10 @@ async def anthropic_messages(request: Request):
     messages = [{"role": "system", "content": system_prompt}]
     for m in body.get("messages", []):
         content = m.get("content")
-        if isinstance(content, list):
-            texts = [c.get("text", "") for c in content if c.get("type") == "text"]
-            content = "\n".join(texts)
-        messages.append({"role": m.get("role", "user"), "content": content or ""})
+        messages.append({
+            "role": m.get("role", "user"),
+            "content": anthropic_content_to_openai(content)
+        })
 
     upstream_base = UPSTREAM_GLOBAL if realm == "global" else UPSTREAM_CN
     headers = {

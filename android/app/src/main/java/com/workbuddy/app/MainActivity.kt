@@ -21,8 +21,13 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 启动本地原生守护服务
-        startService(Intent(this, GatewayService::class.java))
+        // 启动本地原生前台守护服务
+        val serviceIntent = Intent(this, GatewayService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
 
         webView = WebView(this).apply {
             settings.apply {
