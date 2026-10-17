@@ -103,8 +103,8 @@
   <!-- 4. 即时对话 Tab -->
   <main id="view-chat" class="tab-content">
     <div class="chat-container">
-      <div style="margin-bottom: 8px;">
-        <select id="chatModelSelect" class="input-field" style="margin-bottom: 0;">
+      <div style="margin-bottom: 8px; display: flex; gap: 8px;">
+        <select id="chatModelSelect" class="input-field" style="margin-bottom: 0; flex: 1;">
           <option value="global:deepseek-v4.1-flash">DeepSeek-V4.1-Flash (国际版)</option>
           <option value="global:glm-5.2">GLM-5.2 (1M 长上下文)</option>
           <option value="global:gpt-5.4">GPT-5.4</option>
@@ -112,6 +112,7 @@
           <option value="global:kimi-k3">Kimi-K3</option>
           <option value="global:gemini-3.8-flash">Gemini-3.8-Flash</option>
         </select>
+        <button class="btn btn-outline btn-sm" onclick="clearChat()" style="min-height: 42px; white-space: nowrap;">🧹 新对话</button>
       </div>
 
       <div class="chat-messages" id="chatMessages">

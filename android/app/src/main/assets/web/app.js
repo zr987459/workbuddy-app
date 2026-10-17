@@ -253,8 +253,38 @@ function copyBaseUrl() {
 
 // 4. 即时对话工作台 (直接调用本地引擎流式 SSE)
 let chatHistory = [];
+let currentAbortController = null;
+
+function clearChat() {
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
+  }
+  chatHistory = [];
+  const messagesBox = document.getElementById('chatMessages');
+  messagesBox.innerHTML = `
+    <div class="chat-bubble assistant">
+      ✨ 对话已重置，上下文已全部清空。请输入您想咨询的问题！
+    </div>
+  `;
+  const sendBtn = document.getElementById('sendBtn');
+  sendBtn.textContent = '发送';
+  sendBtn.style.background = '';
+  showToast('已重置为全新对话');
+}
 
 async function sendMessage() {
+  const sendBtn = document.getElementById('sendBtn');
+
+  // 若当前正在生成，点击按钮则立即掐断
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
+    sendBtn.textContent = '发送';
+    sendBtn.style.background = '';
+    return;
+  }
+
   const input = document.getElementById('chatInput');
   const text = input.value.trim();
   if (!text) return;
@@ -278,8 +308,9 @@ async function sendMessage() {
   messagesBox.appendChild(aiBubble);
   messagesBox.scrollTop = messagesBox.scrollHeight;
 
-  const sendBtn = document.getElementById('sendBtn');
-  sendBtn.disabled = true;
+  currentAbortController = new AbortController();
+  sendBtn.textContent = '⏹ 停止';
+  sendBtn.style.background = '#ef4444';
 
   let assistantContent = '';
   let thinkingContent = '';
@@ -290,6 +321,7 @@ async function sendMessage() {
       headers: {
         'Content-Type': 'application/json'
       },
+      signal: currentAbortController.signal,
       body: JSON.stringify({
         model: model,
         messages: chatHistory,
@@ -349,9 +381,15 @@ async function sendMessage() {
 
     chatHistory.push({ role: 'assistant', content: assistantContent });
   } catch (e) {
-    aiBubble.textContent = `发送失败: ${e.message}`;
+    if (e.name === 'AbortError') {
+      aiBubble.innerHTML += '<span style="color: var(--text-dim); margin-left: 8px;">(已中止)</span>';
+    } else {
+      aiBubble.textContent = `发送失败: ${e.message}`;
+    }
   } finally {
-    sendBtn.disabled = false;
+    currentAbortController = null;
+    sendBtn.textContent = '发送';
+    sendBtn.style.background = '';
   }
 }
 
