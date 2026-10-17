@@ -50,25 +50,23 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.5
-          name: "WorkBuddy App v1.0.5 (纯安卓独立版)"
+          tag_name: v1.0.7
+          name: "WorkBuddy App v1.0.7 (纯安卓独立版)"
           target_commitish: ${{ github.sha }}
           prerelease: false
           files: dist/WorkBuddyApp.apk
           body: |
-            ### 📱 WorkBuddy App (纯安卓独立版 v1.0.5)
+            ### 📱 WorkBuddy App (纯安卓独立版 v1.0.7)
 
-            - 🖼️ **全面支持多模态图片识别 (OpenAI + Anthropic)**：
-              - 彻底修复图片块被误当作纯字符串丢弃的问题；
-              - OpenAI 协议原生支持 `image_url`（Base64 / URL）；
-              - Anthropic 协议自动将 `type: image` 图片源解析并转换为标准多模态图片块下发上游，图片识别一触即发！
-            - 🔋 **后台常驻与按需 WakeLock（锁屏/切后台不挂起）**：
-              - 采用官方 `startForegroundService` + `START_STICKY` 自拉起守护；
-              - 引入按需唤醒锁（请求期间自动 acquire 续期，空闲时自动 release 彻底省电），锁屏或退回桌面长输出绝不中断；
-            - 🛡️ **对齐 Hark 架构**：精确字节流读满、TCP_NODELAY、实时 Flush 与双端点智能兜底。
-            - 🔌 **通用 API 导出**：
-              - 本地 OpenAI 接口：`http://127.0.0.1:8800/v1/chat/completions`
-              - 本地 Anthropic 接口：`http://127.0.0.1:8800/v1/messages`
+            - 🌐 **100% 对齐腾讯官方 WorkBuddy 国际版真实模型与倍率**：
+              - **0.00x 限免免费白嫖**：`deepseek-v4.1-flash-1017`（最新多模态快照）、`deepseek-v4.1-flash`、`hy4-preview`（混元深度思考）、`hy3` 国际版全部 0 积分免费！
+              - **国际版专属大模型**：`gpt-6-astra` (6.67x 顶级旗舰)、`gpt-5.6-sol`、`gpt-5.4` (原生多模态识图)、`grok-4.7`、`gemini-3.5-flash` 全量就绪；
+              - 剔除所有捏造参数，严格按官方口径呈现真实模型与倍率。
+            - 🧠 **深度思考与思维链 (Thinking) 全面激活**：
+              - 自动透传 `reasoning_effort: high`，响应侧原生保留并分发 `reasoning_content` 与 Anthropic `thinking_delta`。
+            - 🛠️ **完整支持工具调用 (Function / Tool Calling)**：
+              - 采用黑名单透传机制，请求中的 `tools`、`tool_choice`、`parallel_tool_calls` 100% 完整送达上游。
+            - 🔋 **后台常驻守护**：startForegroundService + START_STICKY + 按需 WakeLock，切后台或锁屏长请求永不断流。
 
             *点击下方 Assets 里的 `WorkBuddyApp.apk` 即可下载安装！*
         env:

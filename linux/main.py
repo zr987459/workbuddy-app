@@ -213,14 +213,25 @@ def normalize_model(model: str) -> tuple[str, str]:
 @app.get("/v1/v1/models")
 async def list_models():
     models = [
-        {"id": "deepseek-v4.1-flash", "object": "model", "name": "DeepSeek-V4.1-Flash", "supports_reasoning": True},
-        {"id": "global:deepseek-v4.1-flash", "object": "model", "name": "DeepSeek-V4.1-Flash (Global)", "supports_reasoning": True},
-        {"id": "glm-5.2", "object": "model", "name": "GLM-5.2", "supports_reasoning": True},
-        {"id": "global:glm-5.2", "object": "model", "name": "GLM-5.2 (Global)", "supports_reasoning": True},
-        {"id": "gpt-5.4", "object": "model", "name": "GPT-5.4", "supports_reasoning": True},
-        {"id": "grok-4.7", "object": "model", "name": "Grok-4.7", "supports_reasoning": True},
-        {"id": "kimi-k3", "object": "model", "name": "Kimi-K3", "supports_reasoning": True},
-        {"id": "gemini-3.8-flash", "object": "model", "name": "Gemini-3.8-Flash", "supports_reasoning": True},
+        {"id": "deepseek-v4.1-flash-1017", "object": "model", "name": "DeepSeek-V4.1-Flash-1017 [0.00x 限免免费 · 多模态+思考]", "credits": "0.00x (Free)", "supports_reasoning": True, "supports_images": True},
+        {"id": "global:deepseek-v4.1-flash-1017", "object": "model", "name": "DeepSeek-V4.1-Flash-1017 (Global) [0.00x 限免免费]", "credits": "0.00x (Free)", "supports_reasoning": True, "supports_images": True},
+        {"id": "deepseek-v4.1-flash", "object": "model", "name": "DeepSeek-V4.1-Flash [0.00x 限免免费]", "credits": "0.00x (Free)", "supports_reasoning": True, "supports_images": True},
+        {"id": "global:deepseek-v4.1-flash", "object": "model", "name": "DeepSeek-V4.1-Flash (Global) [0.00x 限免免费]", "credits": "0.00x (Free)", "supports_reasoning": True, "supports_images": True},
+        {"id": "hy4-preview", "object": "model", "name": "Hy4-Preview [0.00x 限免免费 · 混元深度思考]", "credits": "0.00x (Free)", "supports_reasoning": True, "supports_images": True},
+        {"id": "hy3", "object": "model", "name": "Hy3 [0.00x 限免免费]", "credits": "0.00x (Free)", "supports_reasoning": True, "supports_images": True},
+        {"id": "gpt-6-astra", "object": "model", "name": "GPT-6-Astra [6.67x · 国际版专属顶级旗舰]", "credits": "6.67x", "supports_reasoning": True, "supports_images": True},
+        {"id": "gpt-5.6-sol", "object": "model", "name": "GPT-5.6-Sol [国际版专属]", "supports_images": True},
+        {"id": "gpt-5.4", "object": "model", "name": "GPT-5.4 [国际版原生多模态]", "supports_images": True},
+        {"id": "grok-4.7", "object": "model", "name": "Grok-4.7 [国际版专属]"},
+        {"id": "gemini-3.5-flash", "object": "model", "name": "Gemini-3.5-Flash [国际版原生多模态]", "supports_images": True},
+        {"id": "glm-5.3-flash", "object": "model", "name": "GLM-5.3-Flash [极低消耗]", "supports_reasoning": True, "supports_images": True},
+        {"id": "glm-5.3", "object": "model", "name": "GLM-5.3 [最新旗舰]", "supports_reasoning": True, "supports_images": True},
+        {"id": "glm-5.2", "object": "model", "name": "GLM-5.2 [1M 长上下文]", "supports_reasoning": True, "supports_images": True},
+        {"id": "kimi-k3", "object": "model", "name": "Kimi-K3 [长文本深度推理]", "supports_reasoning": True, "supports_images": True},
+        {"id": "kimi-k2.8-preview", "object": "model", "name": "Kimi-K2.8-Preview [深度推理]", "supports_reasoning": True, "supports_images": True},
+        {"id": "claude-3.7-sonnet", "object": "model", "name": "Claude-3.7-Sonnet (官方映射 default-1.1)", "supports_images": True},
+        {"id": "claude-4.0-sonnet", "object": "model", "name": "Claude-4.0-Sonnet (官方映射 default-1.2)", "supports_images": True},
+        {"id": "auto", "object": "model", "name": "Auto [自动智能调度]", "supports_reasoning": True},
     ]
     return {"object": "list", "data": models}
 
@@ -252,11 +263,13 @@ async def chat_completions(request: Request):
         "User-Agent": CLIENT_UA,
     }
 
-    upstream_payload = {
-        "model": model_name,
-        "messages": messages,
-        "stream": True  # 官方只支持流式，若客户端要非流式则本地聚合
-    }
+    # 采用黑名单模式，完整透传 tools / tool_choice / reasoning_effort 等参数
+    upstream_payload = {k: v for k, v in body.items() if k not in ["stream"]}
+    upstream_payload["model"] = model_name
+    upstream_payload["messages"] = messages
+    upstream_payload["stream"] = True
+    if "reasoning_effort" not in upstream_payload:
+        upstream_payload["reasoning_effort"] = "high"
 
     if not is_stream:
         # 本地流式聚合为单次响应

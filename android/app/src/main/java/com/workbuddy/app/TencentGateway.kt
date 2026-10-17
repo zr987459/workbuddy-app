@@ -19,11 +19,19 @@ object TencentGateway {
     const val CLIENT_UA = "WorkBuddy/5.5.4 WorkBuddy AI/5.5.4 CLI/2.137.1"
     const val DEFAULT_SYSTEM_PROMPT = "You are WorkBuddy, an advanced AI programming assistant developed by Tencent."
 
+    // 模型别名映射
+    private val MODEL_ALIASES = mapOf(
+        "claude-3.7-sonnet" to "default-1.1",
+        "claude-4.0-sonnet" to "default-1.2",
+        "kimi-k3" to "kimi-k3-1",
+        "kimi-k3.1" to "kimi-k3-1"
+    )
+
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
@@ -140,13 +148,15 @@ object TencentGateway {
         }
     }
 
-    fun chatSync(modelRaw: String, messagesArray: JSONArray): JSONObject {
+    fun chatSync(payload: JSONObject): JSONObject {
         val sb = StringBuilder()
+        val sbReasoning = StringBuilder()
         var lastChunkPromptTokens = 20
         var lastChunkCompTokens = 20
         var upstreamError: String? = null
+        val toolCallsMap = HashMap<Int, JSONObject>()
 
-        streamChat(modelRaw, messagesArray) { line ->
+        streamChat(payload) { line ->
             val trimmed = line.trim()
             if (trimmed.startsWith("data: ") && trimmed != "data: [DONE]") {
                 try {
@@ -154,10 +164,44 @@ object TencentGateway {
                     if (chunk.has("error")) {
                         upstreamError = chunk.optString("error")
                     }
-                    val delta = chunk.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")
+                    val choice = chunk.optJSONArray("choices")?.optJSONObject(0)
+                    val delta = choice?.optJSONObject("delta")
                     val content = delta?.optString("content", "") ?: ""
                     if (content.isNotEmpty()) {
                         sb.append(content)
+                    }
+                    val reasoning = delta?.optString("reasoning_content", "") ?: ""
+                    if (reasoning.isNotEmpty()) {
+                        sbReasoning.append(reasoning)
+                    }
+                    val toolCalls = delta?.optJSONArray("tool_calls")
+                    if (toolCalls != null) {
+                        for (i in 0 until toolCalls.length()) {
+                            val tc = toolCalls.optJSONObject(i) ?: continue
+                            val idx = tc.optInt("index", i)
+                            val slot = toolCallsMap.getOrPut(idx) {
+                                JSONObject().apply {
+                                    put("id", tc.optString("id", "call_${UUID.randomUUID().toString().take(8)}"))
+                                    put("type", "function")
+                                    put("function", JSONObject().apply {
+                                        put("name", "")
+                                        put("arguments", "")
+                                    })
+                                }
+                            }
+                            val fn = slot.getJSONObject("function")
+                            val deltaFn = tc.optJSONObject("function")
+                            if (deltaFn != null) {
+                                val namePiece = deltaFn.optString("name", "")
+                                if (namePiece.isNotEmpty()) {
+                                    fn.put("name", fn.optString("name", "") + namePiece)
+                                }
+                                val argPiece = deltaFn.optString("arguments", "")
+                                if (argPiece.isNotEmpty()) {
+                                    fn.put("arguments", fn.optString("arguments", "") + argPiece)
+                                }
+                            }
+                        }
                     }
                     val usage = chunk.optJSONObject("usage")
                     if (usage != null) {
@@ -174,36 +218,60 @@ object TencentGateway {
         }
 
         val text = sb.toString()
-        if (text.isEmpty()) {
+        val hasTools = toolCallsMap.isNotEmpty()
+        if (text.isEmpty() && !hasTools) {
             throw IOException("Upstream returned empty completion")
+        }
+
+        val toolCallsArray = JSONArray()
+        for (slot in toolCallsMap.values) {
+            toolCallsArray.put(slot)
         }
 
         return JSONObject().apply {
             put("content", text)
+            put("reasoning_content", sbReasoning.toString())
+            if (hasTools) {
+                put("tool_calls", toolCallsArray)
+            }
             put("prompt_tokens", lastChunkPromptTokens)
-            put("completion_tokens", maxOf(lastChunkCompTokens, text.length / 2))
+            put("completion_tokens", maxOf(lastChunkCompTokens, (text.length + sbReasoning.length) / 2))
         }
     }
 
+    /**
+     * 流式调用：采用黑名单思想，完整保留 tools / tool_choice / reasoning_effort / temperature 等所有客户端参数！
+     */
     fun streamChat(
-        modelRaw: String,
-        messagesArray: JSONArray,
+        payload: JSONObject,
         onLine: (String) -> Boolean
     ) {
+        val modelRaw = payload.optString("model", "deepseek-v4.1-flash-1017")
         val modelLower = modelRaw.lowercase()
         val realm = if (modelLower.startsWith("cn:")) "cn" else "global"
-        val modelName = modelLower.removePrefix("global:").removePrefix("cn:")
+        var cleanModel = modelLower.removePrefix("global:").removePrefix("cn:")
+        cleanModel = MODEL_ALIASES[cleanModel] ?: cleanModel
 
         val acc = AccountVault.getActiveAccount(realm) ?: throw IllegalStateException("未登录账号，请先在面板添加账号")
         val base = if (realm == "global") UPSTREAM_GLOBAL else UPSTREAM_CN
         val uid = acc.optString("uid", "user_default")
 
-        // 规范化 messages: 确保第一条是 system
+        // 复制上游 Payload，仅做 model 映射与 messages[0]=system 规范化，其余字段完整透传
+        val upstreamPayload = JSONObject(payload.toString())
+        upstreamPayload.put("model", cleanModel)
+        upstreamPayload.put("stream", true)
+
+        // 如果客户端未显式传 reasoning_effort，对推理模型默认给 high 激活思考
+        if (!upstreamPayload.has("reasoning_effort")) {
+            upstreamPayload.put("reasoning_effort", "high")
+        }
+
+        val messagesArray = upstreamPayload.optJSONArray("messages") ?: JSONArray()
         val normMessages = JSONArray()
         var hasSystem = false
         if (messagesArray.length() > 0) {
-            val first = messagesArray.getJSONObject(0)
-            if (first.optString("role") == "system") {
+            val first = messagesArray.optJSONObject(0)
+            if (first?.optString("role") == "system") {
                 hasSystem = true
             }
         }
@@ -216,17 +284,11 @@ object TencentGateway {
         for (i in 0 until messagesArray.length()) {
             normMessages.put(messagesArray.getJSONObject(i))
         }
-
-        val payload = JSONObject().apply {
-            put("model", modelName)
-            put("messages", normMessages)
-            put("stream", true)
-        }
+        upstreamPayload.put("messages", normMessages)
 
         val machineId = sha256Prefix("wb2a:machine:$uid")
         val sessionId = sha256Prefix("wb2a:session:$uid")
 
-        // 双路径自动回落：/console 兜底 /v2 (对齐腾讯 2026-10-17 渠道校验规则)
         val endpoints = listOf("$base/console/chat/completions", "$base/v2/chat/completions")
 
         for (url in endpoints) {
@@ -259,14 +321,13 @@ object TencentGateway {
                 reqBuilder.header("X-No-Department-Info", "1")
             }
 
-            val req = reqBuilder.post(payload.toString().toRequestBody(jsonMedia)).build()
+            val req = reqBuilder.post(upstreamPayload.toString().toRequestBody(jsonMedia)).build()
 
             try {
                 okHttpClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) {
                         if (url == endpoints.first()) {
-                            // 尝试下一条候选路径
-                            return@use
+                            return@use // 兜底尝试下一条端点
                         }
                         val err = resp.body?.string() ?: "HTTP ${resp.code}"
                         onLine("data: ${JSONObject().apply { put("error", err) }}\n\n")
@@ -281,7 +342,7 @@ object TencentGateway {
                             if (!keepGoing) break
                         }
                     }
-                    return // 成功完成
+                    return
                 }
             } catch (e: Exception) {
                 if (url == endpoints.last()) {
