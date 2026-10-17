@@ -50,14 +50,15 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: "WorkBuddy App v1.0.0 (纯安卓独立版)"
+          tag_name: v1.0.1
+          name: "WorkBuddy App v1.0.1 (纯安卓独立版)"
           target_commitish: ${{ github.sha }}
           prerelease: false
           files: dist/WorkBuddyApp.apk
           body: |
-            ### 📱 WorkBuddy App (纯安卓独立版 v1.0.0)
+            ### 📱 WorkBuddy App (纯安卓独立版 v1.0.1)
 
+            - 📋 **新增官方授权链接复制功能**：授权弹窗内增加链接明文展示与「📋 复制链接」一键复制按钮，便于复制到其他浏览器或设备登录！
             - 🚀 **100% 纯安卓原生直驱（真·单机独立运行）**：
               - 采用纯 Kotlin + OkHttp3 原生协议引擎，内置轻量嵌入式网关；
               - **彻底告别 Termux / PRoot / 外部 Python 二进制**，彻底规避 Android 10+ SELinux 无执行权限拦截！

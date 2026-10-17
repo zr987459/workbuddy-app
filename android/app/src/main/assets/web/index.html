@@ -159,7 +159,11 @@
 
       <div id="authResultArea" style="display: none; margin-bottom: 14px;">
         <div style="font-size: 12px; color: var(--accent); margin-bottom: 6px;">官方授权链接已就绪：</div>
-        <a id="authLinkBtn" href="#" target="_blank" class="btn btn-primary" style="width: 100%; text-decoration: none;">👉 点击前往浏览器授权</a>
+        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+          <input type="text" id="authUrlInput" readonly class="input-field" style="margin-bottom: 0; font-family: var(--font-mono); font-size: 12px; flex: 1; background: rgba(0,0,0,0.4);" />
+          <button type="button" class="btn btn-outline" onclick="copyAuthUrl()" id="copyAuthUrlBtn" style="white-space: nowrap; flex-shrink: 0;">📋 复制链接</button>
+        </div>
+        <a id="authLinkBtn" href="#" target="_blank" class="btn btn-primary" style="width: 100%; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 6px;">👉 直接跳到浏览器打开</a>
       </div>
 
       <div style="display: flex; gap: 8px;">

@@ -2,6 +2,37 @@
 
 let currentTab = 'overview';
 let activePollTimer = null;
+let currentAuthUrl = '';
+
+function showToast(msg) {
+  let container = document.getElementById('toastContainer');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toastContainer';
+    container.style.cssText = 'position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 9999; pointer-events: none;';
+    document.body.appendChild(container);
+  }
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transition = 'opacity 0.3s ease';
+    setTimeout(() => el.remove(), 300);
+  }, 2000);
+}
+
+function copyAuthUrl() {
+  if (currentAuthUrl) {
+    copyText(currentAuthUrl);
+    const btn = document.getElementById('copyAuthUrlBtn');
+    if (btn) {
+      btn.textContent = '✅ 已复制';
+      setTimeout(() => { btn.textContent = '📋 复制链接'; }, 2000);
+    }
+  }
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   loadOverview();
@@ -140,6 +171,10 @@ async function requestAuthLink() {
     });
     const data = await res.json();
     if (data.ok && data.url) {
+      currentAuthUrl = data.url;
+      const urlInput = document.getElementById('authUrlInput');
+      if (urlInput) urlInput.value = data.url;
+
       const linkBtn = document.getElementById('authLinkBtn');
       linkBtn.href = data.url;
       linkBtn.onclick = (e) => {
@@ -329,10 +364,31 @@ function closeModal(id) {
 }
 
 function copyText(str) {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(str).then(() => alert('已复制到剪贴板！'));
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(str).then(() => {
+      showToast('已复制到剪贴板！');
+    }).catch(() => {
+      fallbackCopy(str);
+    });
   } else {
-    alert('复制内容：\n' + str);
+    fallbackCopy(str);
+  }
+}
+
+function fallbackCopy(str) {
+  const ta = document.createElement('textarea');
+  ta.value = str;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand('copy');
+    showToast('已复制到剪贴板！');
+  } catch (e) {
+    prompt('请手动选择复制以下内容：', str);
+  } finally {
+    document.body.removeChild(ta);
   }
 }
 
