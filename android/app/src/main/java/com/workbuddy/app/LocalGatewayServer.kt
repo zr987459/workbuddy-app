@@ -255,7 +255,21 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
 
             // 转换 Anthropic 格式为 OpenAI messages
             val openaiMessages = JSONArray()
-            val systemPrompt = json.optString("system", TencentGateway.DEFAULT_SYSTEM_PROMPT)
+            val systemObj = json.opt("system")
+            val systemPrompt = when (systemObj) {
+                is String -> systemObj.ifEmpty { TencentGateway.DEFAULT_SYSTEM_PROMPT }
+                is JSONArray -> {
+                    val sb = StringBuilder()
+                    for (k in 0 until systemObj.length()) {
+                        val part = systemObj.optJSONObject(k)
+                        if (part != null && part.optString("type") == "text") {
+                            sb.append(part.optString("text"))
+                        }
+                    }
+                    sb.toString().ifEmpty { TencentGateway.DEFAULT_SYSTEM_PROMPT }
+                }
+                else -> TencentGateway.DEFAULT_SYSTEM_PROMPT
+            }
             openaiMessages.put(JSONObject().apply {
                 put("role", "system")
                 put("content", systemPrompt)
@@ -320,6 +334,7 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                 val sseHeader = "HTTP/1.1 200 OK\r\n" +
                         "Content-Type: text/event-stream; charset=utf-8\r\n" +
                         "Cache-Control: no-cache, no-transform\r\n" +
+                        "X-Accel-Buffering: no\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
                         "Access-Control-Allow-Origin: *\r\n" +
                         "Connection: keep-alive\r\n\r\n"
@@ -339,7 +354,7 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                         put("stop_sequence", JSONObject.NULL)
                         put("usage", JSONObject().apply {
                             put("input_tokens", 20)
-                            put("output_tokens", 1)
+                            put("output_tokens", 0)
                         })
                     })
                 }}\n\n")

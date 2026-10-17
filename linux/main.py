@@ -325,7 +325,16 @@ async def anthropic_messages(request: Request):
             content={"type": "error", "error": {"type": "api_error", "message": "无可用账号"}}
         )
 
-    system_prompt = body.get("system") or DEFAULT_SYSTEM_PROMPT
+    # 转换 Anthropic 格式为 OpenAI 格式
+    system_val = body.get("system")
+    if isinstance(system_val, list):
+        texts = [c.get("text", "") for c in system_val if isinstance(c, dict) and c.get("type") == "text"]
+        system_prompt = "\n".join(texts).strip() or DEFAULT_SYSTEM_PROMPT
+    elif isinstance(system_val, str) and system_val.strip():
+        system_prompt = system_val.strip()
+    else:
+        system_prompt = DEFAULT_SYSTEM_PROMPT
+
     messages = [{"role": "system", "content": system_prompt}]
     for m in body.get("messages", []):
         content = m.get("content")
@@ -378,7 +387,7 @@ async def anthropic_messages(request: Request):
             "stop_sequence": None,
             "usage": {
                 "input_tokens": 20,
-                "output_tokens": max(len(full_text)//2, 1)
+                "output_tokens": max(len(full_text) // 2, 1)
             }
         }
     else:
@@ -386,7 +395,7 @@ async def anthropic_messages(request: Request):
         async def anthropic_stream_proxy():
             client = httpx.AsyncClient(proxy=get_proxy(), timeout=120.0)
             try:
-                yield f"event: message_start\ndata: {json.dumps({'type':'message_start','message':{'id':msg_id,'type':'message','role':'assistant','content':[],'model':model_raw,'stop_reason':None,'stop_sequence':None,'usage':{'input_tokens':20,'output_tokens':1}}})}\n\n"
+                yield f"event: message_start\ndata: {json.dumps({'type':'message_start','message':{'id':msg_id,'type':'message','role':'assistant','content':[],'model':model_raw,'stop_reason':None,'stop_sequence':None,'usage':{'input_tokens':20,'output_tokens':0}}})}\n\n"
                 yield f"event: content_block_start\ndata: {json.dumps({'type':'content_block_start','index':0,'content_block':{'type':'text','text':''}})}\n\n"
 
                 out_count = 0
@@ -423,7 +432,15 @@ async def anthropic_messages(request: Request):
             finally:
                 await client.aclose()
 
-        return StreamingResponse(anthropic_stream_proxy(), media_type="text/event-stream")
+        return StreamingResponse(
+            anthropic_stream_proxy(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
 
 # ─────────────────── 静态前端路由 ───────────────────
 
