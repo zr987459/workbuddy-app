@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>WorkBuddy Mobile</title>
+  <link rel="stylesheet" href="style.css" />
+  <meta name="theme-color" content="#0b0f17" />
+</head>
+<body>
+
+  <!-- 顶部状态栏 -->
+  <header class="app-header">
+    <div class="brand-wrap">
+      <div class="brand-icon">W</div>
+      <div>
+        <div class="brand-title">WorkBuddy <span class="brand-badge">Mobile</span></div>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <button class="btn btn-outline btn-sm" onclick="window.location.href='http://127.0.0.1:7863/panel/'" style="font-size: 11px; padding: 2px 8px; min-height: 28px;">完整后台</button>
+      <div class="status-pill" id="headerStatus">
+        <span class="status-dot"></span>
+        <span id="headerStatusText">连接中...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- 1. 概览 Tab -->
+  <main id="view-overview" class="tab-content active">
+    <div class="metric-grid">
+      <div class="metric-card">
+        <div class="metric-label">可用账号</div>
+        <div class="metric-value" id="statAccounts">0 / 0</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">今日请求</div>
+        <div class="metric-value" id="statTodayReq">0</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">今日 Token</div>
+        <div class="metric-value" id="statTodayTokens">0</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">活跃服务</div>
+        <div class="metric-value" id="statActiveKeys">0</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">
+        <span>网关服务</span>
+        <button class="btn btn-outline btn-sm" onclick="loadOverview()">刷新</button>
+      </div>
+      <div style="font-size: 13px; color: var(--text-muted); line-height: 1.8;">
+        <div>📡 本地引擎：<span id="infoCoreUrl" style="font-family: var(--font-mono); color: var(--text-main);">http://127.0.0.1:7863</span></div>
+        <div>🚀 国际版支持：<span style="color: var(--primary); font-weight: 600;">已就绪 (Global / workbuddy.ai)</span></div>
+        <div>🔐 API 接口：<span style="font-family: var(--font-mono); color: var(--accent);">/v1/chat/completions</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">快捷操作</div>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+        移动端已全面精简国内碎包积分噪点，专注于纯净的账号纳管与大模型 API 转发。
+      </p>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-primary" style="flex: 1;" onclick="switchTab('accounts')">查看账号</button>
+        <button class="btn btn-outline" style="flex: 1;" onclick="switchTab('chat')">开始对话</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- 2. 账号 Tab -->
+  <main id="view-accounts" class="tab-content">
+    <div class="section-title">
+      <span>账号列表 (<span id="accountCount">0</span>)</span>
+      <button class="btn btn-primary btn-sm" onclick="openAuthModal()">+ 授权新账号</button>
+    </div>
+    <div id="accountList">
+      <div style="text-align: center; padding: 40px; color: var(--text-dim);">加载账号中...</div>
+    </div>
+  </main>
+
+  <!-- 3. 密钥 Tab -->
+  <main id="view-keys" class="tab-content">
+    <div class="section-title">
+      <span>API 接入</span>
+    </div>
+
+    <div class="card" style="background: rgba(56, 189, 248, 0.05); border-color: rgba(56, 189, 248, 0.2); margin-bottom: 16px;">
+      <div style="font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 4px;">第三方客户端配置地址 (Base URL)</div>
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+        <span id="baseUrlDisplay" style="font-family: var(--font-mono); font-size: 13px; color: var(--text-main);">http://127.0.0.1:7863/v1</span>
+        <button class="btn btn-outline btn-sm" onclick="copyBaseUrl()">复制</button>
+      </div>
+    </div>
+
+    <div id="keyList">
+      <div style="text-align: center; padding: 40px; color: var(--text-dim);">加载中...</div>
+    </div>
+  </main>
+
+  <!-- 4. 即时对话 Tab -->
+  <main id="view-chat" class="tab-content">
+    <div class="chat-container">
+      <div style="margin-bottom: 8px;">
+        <select id="chatModelSelect" class="input-field" style="margin-bottom: 0;">
+          <option value="global:deepseek-v4.1-flash">DeepSeek-V4.1-Flash (国际版)</option>
+          <option value="global:glm-5.2">GLM-5.2 (1M 长上下文)</option>
+          <option value="global:gpt-5.4">GPT-5.4</option>
+          <option value="global:grok-4.7">Grok-4.7</option>
+          <option value="global:kimi-k3">Kimi-K3</option>
+          <option value="global:gemini-3.8-flash">Gemini-3.8-Flash</option>
+        </select>
+      </div>
+
+      <div class="chat-messages" id="chatMessages">
+        <div class="chat-bubble assistant">
+          您好！已连接至 WorkBuddy Mobile 本地引擎。输入消息即可直接验证模型输出与思维链。
+        </div>
+      </div>
+
+      <div class="chat-input-bar">
+        <input type="text" id="chatInput" class="chat-input" placeholder="输入对话内容..." onkeydown="if(event.key==='Enter')sendMessage()" />
+        <button class="btn btn-primary btn-sm" onclick="sendMessage()" id="sendBtn">发送</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- 浮动胶囊底栏 -->
+  <nav class="bottom-nav">
+    <div class="nav-item active" data-tab="overview" onclick="switchTab('overview')">
+      <div class="nav-icon">📊</div>
+      <div>概览</div>
+    </div>
+    <div class="nav-item" data-tab="accounts" onclick="switchTab('accounts')">
+      <div class="nav-icon">👤</div>
+      <div>账号</div>
+    </div>
+    <div class="nav-item" data-tab="keys" onclick="switchTab('keys')">
+      <div class="nav-icon">🔑</div>
+      <div>接入</div>
+    </div>
+    <div class="nav-item" data-tab="chat" onclick="switchTab('chat')">
+      <div class="nav-icon">💬</div>
+      <div>对话</div>
+    </div>
+  </nav>
+
+  <!-- 授权弹窗 -->
+  <div class="modal-overlay" id="authModal">
+    <div class="modal-sheet">
+      <div class="sheet-handle"></div>
+      <div class="section-title">授权添加账号</div>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+        国际版一键授权：系统将生成官方授权链接，点击后在手机浏览器中确认登录，App 将自动完成入库。
+      </p>
+
+      <div id="authResultArea" style="display: none; margin-bottom: 14px;">
+        <div style="font-size: 12px; color: var(--accent); margin-bottom: 6px;">官方授权链接已就绪：</div>
+        <a id="authLinkBtn" href="#" target="_blank" class="btn btn-primary" style="width: 100%; text-decoration: none;">👉 点击前往浏览器授权</a>
+      </div>
+
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-primary" style="flex: 1;" id="startAuthBtn" onclick="requestAuthLink()">获取授权链接</button>
+        <button class="btn btn-outline" style="flex: 1;" onclick="closeModal('authModal')">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

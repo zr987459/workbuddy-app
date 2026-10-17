@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.WorkBuddyApp" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:statusBarColor">#0B0F17</item>
+        <item name="android:navigationBarColor">#0B0F17</item>
+        <item name="android:windowBackground">#0B0F17</item>
+    </style>
+</resources>
