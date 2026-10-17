@@ -25,7 +25,7 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                     thread { handleConnection(client) }
                 }
             } catch (e: Exception) {
-                // server stopped
+                // server closed
             }
         }
     }
@@ -64,7 +64,7 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                 }
             }
 
-            // 处理 OPTIONS 预检
+            // 处理 OPTIONS 预检请求
             if (method == "OPTIONS") {
                 val preflight = "HTTP/1.1 204 No Content\r\n" +
                         "Access-Control-Allow-Origin: *\r\n" +
@@ -102,7 +102,7 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                         put("total", accounts.length())
                         put("accounts", accounts)
                         put("auth_required", false)
-                        put("version", "1.0.0-android")
+                        put("version", "1.0.2-android")
                     }
                     sendJsonResponse(output, 200, json.toString())
                 }
@@ -121,26 +121,33 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
                     sendJsonResponse(output, 200, res.toString())
                 }
 
-                // 4. API: 模型列表
+                // 4. API: 模型列表 (OpenAI 格式)
                 path == "/v1/models" || path == "/v1/v1/models" -> {
                     val models = JSONArray().apply {
-                        put(JSONObject().apply { put("id", "global:deepseek-v4.1-flash"); put("name", "DeepSeek-V4.1-Flash"); put("object", "model") })
-                        put(JSONObject().apply { put("id", "global:glm-5.2"); put("name", "GLM-5.2"); put("object", "model") })
-                        put(JSONObject().apply { put("id", "global:gpt-5.4"); put("name", "GPT-5.4"); put("object", "model") })
-                        put(JSONObject().apply { put("id", "global:grok-4.7"); put("name", "Grok-4.7"); put("object", "model") })
-                        put(JSONObject().apply { put("id", "global:kimi-k3"); put("name", "Kimi-K3"); put("object", "model") })
-                        put(JSONObject().apply { put("id", "global:gemini-3.8-flash"); put("name", "Gemini-3.8-Flash"); put("object", "model") })
+                        put(JSONObject().apply { put("id", "deepseek-v4.1-flash"); put("name", "DeepSeek-V4.1-Flash"); put("object", "model") })
+                        put(JSONObject().apply { put("id", "global:deepseek-v4.1-flash"); put("name", "DeepSeek-V4.1-Flash (Global)"); put("object", "model") })
+                        put(JSONObject().apply { put("id", "glm-5.2"); put("name", "GLM-5.2"); put("object", "model") })
+                        put(JSONObject().apply { put("id", "global:glm-5.2"); put("name", "GLM-5.2 (Global)"); put("object", "model") })
+                        put(JSONObject().apply { put("id", "gpt-5.4"); put("name", "GPT-5.4"); put("object", "model") })
+                        put(JSONObject().apply { put("id", "grok-4.7"); put("name", "Grok-4.7"); put("object", "model") })
+                        put(JSONObject().apply { put("id", "kimi-k3"); put("name", "Kimi-K3"); put("object", "model") })
+                        put(JSONObject().apply { put("id", "gemini-3.8-flash"); put("name", "Gemini-3.8-Flash"); put("object", "model") })
                     }
                     val json = JSONObject().apply { put("object", "list"); put("data", models) }
                     sendJsonResponse(output, 200, json.toString())
                 }
 
-                // 5. API: 对话流式代理
+                // 5. API: OpenAI 标准流式对话接口
                 path == "/v1/chat/completions" || path == "/v1/v1/chat/completions" -> {
-                    handleChatStreaming(output, body)
+                    handleOpenAiChatStreaming(output, body)
                 }
 
-                // 6. 静态前端资源
+                // 6. API: Anthropic Messages 协议支持 (给 Claude/Antigravity 客户端用)
+                path == "/v1/messages" || path == "/v1/v1/messages" -> {
+                    handleAnthropicMessagesStreaming(output, body)
+                }
+
+                // 7. 静态前端资源
                 else -> {
                     serveStaticAsset(output, path)
                 }
@@ -164,12 +171,28 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
         output.write(bytes)
     }
 
-    private fun handleChatStreaming(output: OutputStream, bodyStr: String) {
+    private fun writeChunk(output: OutputStream, chunkStr: String) {
+        val bytes = chunkStr.toByteArray(Charsets.UTF_8)
+        val hex = Integer.toHexString(bytes.size)
+        output.write("$hex\r\n".toByteArray(Charsets.US_ASCII))
+        output.write(bytes)
+        output.write("\r\n".toByteArray(Charsets.US_ASCII))
+        output.flush()
+    }
+
+    private fun endChunked(output: OutputStream) {
+        output.write("0\r\n\r\n".toByteArray(Charsets.US_ASCII))
+        output.flush()
+    }
+
+    private fun handleOpenAiChatStreaming(output: OutputStream, bodyStr: String) {
+        // 使用标准的 HTTP/1.1 Chunked Transfer Encoding 确保浏览器 fetch 流式打字机即时推送
         val sseHeader = "HTTP/1.1 200 OK\r\n" +
                 "Content-Type: text/event-stream; charset=utf-8\r\n" +
-                "Cache-Control: no-cache\r\n" +
+                "Cache-Control: no-cache, no-transform\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
                 "Access-Control-Allow-Origin: *\r\n" +
-                "Connection: close\r\n\r\n"
+                "Connection: keep-alive\r\n\r\n"
         output.write(sseHeader.toByteArray())
         output.flush()
 
@@ -180,16 +203,137 @@ class LocalGatewayServer(private val context: Context, private val port: Int = 8
 
             TencentGateway.streamChat(model, messages) { line ->
                 try {
-                    output.write(line.toByteArray(Charsets.UTF_8))
-                    output.flush()
+                    writeChunk(output, line)
                     true
                 } catch (e: Exception) {
                     false
                 }
             }
         } catch (e: Exception) {
-            output.write("data: {\"error\": \"${e.message}\"}\n\n".toByteArray())
-            output.flush()
+            writeChunk(output, "data: {\"error\": {\"message\": \"${e.message}\"}}\n\n")
+        } finally {
+            try {
+                endChunked(output)
+            } catch (ignored: Exception) {}
+        }
+    }
+
+    private fun handleAnthropicMessagesStreaming(output: OutputStream, bodyStr: String) {
+        val sseHeader = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: text/event-stream; charset=utf-8\r\n" +
+                "Cache-Control: no-cache, no-transform\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Connection: keep-alive\r\n\r\n"
+        output.write(sseHeader.toByteArray())
+        output.flush()
+
+        try {
+            val json = JSONObject(bodyStr)
+            val modelRaw = json.optString("model", "deepseek-v4.1-flash")
+
+            // 转换 Anthropic 格式为 OpenAI messages 格式
+            val openaiMessages = JSONArray()
+            val systemPrompt = json.optString("system", TencentGateway.DEFAULT_SYSTEM_PROMPT)
+            openaiMessages.put(JSONObject().apply {
+                put("role", "system")
+                put("content", systemPrompt)
+            })
+
+            val messagesArr = json.optJSONArray("messages") ?: JSONArray()
+            for (i in 0 until messagesArr.length()) {
+                val m = messagesArr.getJSONObject(i)
+                val role = m.optString("role", "user")
+                val contentObj = m.opt("content")
+                val textContent = when (contentObj) {
+                    is String -> contentObj
+                    is JSONArray -> {
+                        val sb = StringBuilder()
+                        for (j in 0 until contentObj.length()) {
+                            val part = contentObj.optJSONObject(j)
+                            if (part != null && part.optString("type") == "text") {
+                                sb.append(part.optString("text"))
+                            }
+                        }
+                        sb.toString()
+                    }
+                    else -> ""
+                }
+                openaiMessages.put(JSONObject().apply {
+                    put("role", role)
+                    put("content", textContent)
+                })
+            }
+
+            val msgId = "msg_${System.currentTimeMillis()}"
+
+            // 1. 发送 Anthropic 启动事件
+            writeChunk(output, "event: message_start\ndata: ${JSONObject().apply {
+                put("type", "message_start")
+                put("message", JSONObject().apply {
+                    put("id", msgId)
+                    put("type", "message")
+                    put("role", "assistant")
+                    put("content", JSONArray())
+                    put("model", modelRaw)
+                })
+            }}\n\n")
+
+            writeChunk(output, "event: content_block_start\ndata: ${JSONObject().apply {
+                put("type", "content_block_start")
+                put("index", 0)
+                put("content_block", JSONObject().apply {
+                    put("type", "text")
+                    put("text", "")
+                })
+            }}\n\n")
+
+            // 2. 调用底层流式引擎转发并翻译成 Anthropic SSE
+            TencentGateway.streamChat(modelRaw, openaiMessages) { line ->
+                val trimmed = line.trim()
+                if (trimmed.isNotEmpty() && trimmed != "data: [DONE]" && trimmed.startsWith("data: ")) {
+                    try {
+                        val chunk = JSONObject(trimmed.substring(6))
+                        val delta = chunk.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")
+                        val textDelta = delta?.optString("content", "") ?: ""
+                        if (textDelta.isNotEmpty()) {
+                            writeChunk(output, "event: content_block_delta\ndata: ${JSONObject().apply {
+                                put("type", "content_block_delta")
+                                put("index", 0)
+                                put("delta", JSONObject().apply {
+                                    put("type", "text_delta")
+                                    put("text", textDelta)
+                                })
+                            }}\n\n")
+                        }
+                    } catch (ignored: Exception) {}
+                }
+                true
+            }
+
+            // 3. 发送 Anthropic 结束事件
+            writeChunk(output, "event: content_block_stop\ndata: ${JSONObject().apply {
+                put("type", "content_block_stop")
+                put("index", 0)
+            }}\n\n")
+
+            writeChunk(output, "event: message_delta\ndata: ${JSONObject().apply {
+                put("type", "message_delta")
+                put("delta", JSONObject().apply {
+                    put("stop_reason", "end_turn")
+                })
+            }}\n\n")
+
+            writeChunk(output, "event: message_stop\ndata: ${JSONObject().apply {
+                put("type", "message_stop")
+            }}\n\n")
+
+        } catch (e: Exception) {
+            writeChunk(output, "event: error\ndata: {\"type\": \"error\", \"error\": {\"message\": \"${e.message}\"}}\n\n")
+        } finally {
+            try {
+                endChunked(output)
+            } catch (ignored: Exception) {}
         }
     }
 
