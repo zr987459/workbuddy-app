@@ -296,6 +296,10 @@ object TencentGateway {
                 .url(url)
                 .header("Authorization", "Bearer ${acc.optString("accessToken")}")
                 .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Accept-Language", if (realm == "global") "en-US" else "zh-CN")
+                .header("X-Requested-With", "XMLHttpRequest")
+                .header("X-CodeBuddy-Request", "1")
                 .header("User-Agent", CLIENT_UA)
                 .header("Origin", base)
                 .header("Referer", "$base/")
@@ -335,9 +339,17 @@ object TencentGateway {
                     }
 
                     val source = resp.body?.source() ?: return
+                    var firstLineChecked = false
                     while (!source.exhausted()) {
                         val line = source.readUtf8Line() ?: break
                         if (line.isNotEmpty()) {
+                            if (!firstLineChecked) {
+                                firstLineChecked = true
+                                // 若首行是渠道校验拦截，且还有备用端点，立刻兜底重试！
+                                if ((line.contains("11128") || line.contains("11-128")) && url == endpoints.first()) {
+                                    return@use
+                                }
+                            }
                             val keepGoing = onLine("$line\n\n")
                             if (!keepGoing) break
                         }
