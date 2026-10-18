@@ -65,6 +65,7 @@
       </p>
       <div style="display: flex; gap: 8px;">
         <button class="btn btn-primary" style="flex: 1;" onclick="switchTab('accounts')">查看账号</button>
+        <button class="btn btn-outline" style="flex: 1;" onclick="switchTab('logs')">运行日志</button>
         <button class="btn btn-outline" style="flex: 1;" onclick="switchTab('chat')">开始对话</button>
       </div>
     </div>
@@ -139,6 +140,28 @@
     </div>
   </main>
 
+  <!-- 5. 运行日志 Tab -->
+  <main id="view-logs" class="tab-content">
+    <div class="section-title">
+      <span>网关请求日志 (<span id="logCount">0</span>)</span>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-outline btn-sm" onclick="clearLogs()">清空</button>
+        <button class="btn btn-primary btn-sm" onclick="loadLogs()">刷新</button>
+      </div>
+    </div>
+
+    <div class="card" style="background: rgba(16, 185, 129, 0.05); border-color: rgba(16, 185, 129, 0.2); margin-bottom: 12px; padding: 12px 14px;">
+      <div style="font-size: 12px; color: var(--text-muted); display: flex; justify-content: space-between;">
+        <span>今日累计请求: <b id="logSummaryReq" style="color: var(--primary);">0</b> 次</span>
+        <span>今日 Token: <b id="logSummaryTokens" style="color: var(--accent);">0</b></span>
+      </div>
+    </div>
+
+    <div id="logList">
+      <div style="text-align: center; padding: 40px; color: var(--text-dim);">暂无日志记录</div>
+    </div>
+  </main>
+
   <!-- 浮动胶囊底栏 -->
   <nav class="bottom-nav">
     <div class="nav-item active" data-tab="overview" onclick="switchTab('overview')">
@@ -156,6 +179,10 @@
     <div class="nav-item" data-tab="chat" onclick="switchTab('chat')">
       <div class="nav-icon">💬</div>
       <div>对话</div>
+    </div>
+    <div class="nav-item" data-tab="logs" onclick="switchTab('logs')">
+      <div class="nav-icon">📜</div>
+      <div>日志</div>
     </div>
   </nav>
 

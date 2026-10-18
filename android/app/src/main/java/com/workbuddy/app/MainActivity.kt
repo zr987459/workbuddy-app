@@ -83,8 +83,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && webView.canGoBack()) {
-            webView.goBack()
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (webView.canGoBack()) {
+                webView.goBack()
+                return true
+            }
+            // 返回键切后台守护，不销毁 Activity，让前台服务持续常驻
+            moveTaskToBack(true)
             return true
         }
         return super.onKeyDown(keyCode, event)

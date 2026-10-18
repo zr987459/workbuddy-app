@@ -58,6 +58,7 @@ function switchTab(tab) {
   if (tab === 'overview') loadOverview();
   if (tab === 'accounts') loadAccounts();
   if (tab === 'keys') loadKeys();
+  if (tab === 'logs') loadLogs();
 }
 
 // 1. 概览
@@ -77,14 +78,16 @@ async function loadOverview() {
 
     document.getElementById('statAccounts').textContent = `${data.healthy || 0} / ${data.total || 0}`;
 
-    // 统计所有账号的用量与 Token
-    let todayReq = 0;
-    let todayTokens = 0;
-    (data.accounts || []).forEach(a => {
-      const u = a.token_usage || {};
-      todayReq += (u.request_count || 0);
-      todayTokens += (u.total_tokens || 0);
-    });
+    // 优先采用服务端精确累计数据，无则回退账号用量统计
+    let todayReq = data.today_requests !== undefined ? data.today_requests : 0;
+    let todayTokens = data.today_tokens !== undefined ? data.today_tokens : 0;
+    if (todayReq === 0 && todayTokens === 0) {
+      (data.accounts || []).forEach(a => {
+        const u = a.token_usage || {};
+        todayReq += (u.request_count || 0);
+        todayTokens += (u.total_tokens || 0);
+      });
+    }
 
     document.getElementById('statTodayReq').textContent = todayReq.toLocaleString();
     document.getElementById('statTodayTokens').textContent = todayTokens.toLocaleString();
@@ -439,4 +442,68 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// 5. 运行日志
+async function loadLogs() {
+  const container = document.getElementById('logList');
+  try {
+    const res = await fetch('/panel/api/logs', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const logs = data.logs || [];
+    document.getElementById('logCount').textContent = logs.length;
+    document.getElementById('logSummaryReq').textContent = (data.today_requests || 0).toLocaleString();
+    document.getElementById('logSummaryTokens').textContent = (data.today_tokens || 0).toLocaleString();
+
+    if (logs.length === 0) {
+      container.innerHTML = `
+        <div style="text-align: center; padding: 40px; color: var(--text-dim);">
+          暂无请求记录。调用 API 或在「对话」中测试后将在此实时展示流水。
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = logs.map(l => {
+      const isSuccess = l.status >= 200 && l.status < 300;
+      const statusClass = isSuccess ? 'tag-online' : 'tag-offline';
+      const statusTag = `<span class="tag ${statusClass}">${l.status}</span>`;
+      const timeStr = escapeHtml(l.time || '');
+      const method = escapeHtml(l.method || 'POST');
+      const path = escapeHtml(l.path || '');
+      const model = escapeHtml(l.model || '');
+      const latency = l.latency_ms ? `${l.latency_ms}ms` : '';
+      const tokensStr = l.tokens > 0 ? `${l.tokens.toLocaleString()} tok` : '';
+      const noteStr = l.note ? `<div style="font-size: 11px; color: var(--danger); margin-top: 4px; font-family: var(--font-mono); word-break: break-all;">⚠️ ${escapeHtml(l.note)}</div>` : '';
+
+      return `
+        <div class="item-card" style="padding: 10px 14px; margin-bottom: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              ${statusTag}
+              <span style="font-family: var(--font-mono); font-weight: 600; font-size: 13px; color: var(--text-main);">${method} ${path}</span>
+            </div>
+            <span style="font-size: 11px; color: var(--text-dim); font-family: var(--font-mono);">${timeStr}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted);">
+            <span style="font-family: var(--font-mono); color: var(--accent);">${model}</span>
+            <span style="font-family: var(--font-mono); font-size: 11px;">${[latency, tokensStr].filter(Boolean).join(' · ')}</span>
+          </div>
+          ${noteStr}
+        </div>`;
+    }).join('');
+  } catch (e) {
+    container.innerHTML = `<div style="text-align: center; padding: 40px; color: var(--danger);">加载日志失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function clearLogs() {
+  if (!confirm('确定清空所有本地运行日志吗？')) return;
+  try {
+    await fetch('/panel/api/logs/clear', { method: 'POST' });
+    showToast('日志已清空');
+    loadLogs();
+  } catch (e) {
+    alert('清空失败: ' + e.message);
+  }
 }

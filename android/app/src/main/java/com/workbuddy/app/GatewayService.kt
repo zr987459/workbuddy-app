@@ -56,6 +56,7 @@ class GatewayService : Service() {
     override fun onCreate() {
         super.onCreate()
         AccountVault.init(applicationContext)
+        GatewayMetrics.init(applicationContext)
         createNotificationChannel()
         startForegroundServiceNotification() // 必须在 startForegroundService 后 5 秒内调用
 

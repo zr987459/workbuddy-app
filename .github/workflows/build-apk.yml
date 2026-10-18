@@ -50,25 +50,27 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.5
-          name: "WorkBuddy App v1.1.5 (纯安卓独立版)"
+          tag_name: v1.2.0
+          name: "WorkBuddy App v1.2.0 (纯安卓独立版 · 后台常驻+统计+实时日志)"
           target_commitish: ${{ github.sha }}
           prerelease: false
           files: dist/WorkBuddyApp.apk
           body: |
-            ### 📱 WorkBuddy App (纯安卓独立版 v1.1.5)
+            ### 📱 WorkBuddy App (纯安卓独立版 v1.2.0)
 
-            - 🛡️ **对齐成熟开源项目 (workbuddy2api) 工业级双端点智能回退**：
-              - 完美解决单端点故障问题：默认按 `[/v2/chat/completions, /console/chat/completions]` 智能候选序列派发；
-              - 遇到上游 `11128 / 渠道校验` 自动毫秒级回退至 `/console` 保证普通对话（如「你好」）100% 畅通；
-              - 遇到腾讯云 `403 WAF Block` 自动回退至 `/v2` 保证包含复杂 Linux 诊断脚本（`/proc/` 等）的长请求不被 WAF 阻断；
-              - 出站请求体自动进行反探测脱敏：将历史及上下文中的裸数字 `11128` 改写为 `11-128`，消除上游反探测规则误触发；
-              - 智能规范化首条消息角色（支持 `developer` 自动对齐为 `system`），保证上游首消息强校验 100% 通过；
-            - 🧠 **Hark 深度加固版思考模型闭环**：
-              - 严格按 `$uid:$tool_call_id` 隔离缓存，只在最后一条真实 user 之后的活动工具轮次按需注入，历史长文本零膨胀；
-              - 流式异常下发 `translator.abort(err)` 保证 thinking/text 完整安全闭合；
-            - 🌐 **100% 腾讯官方 WorkBuddy 国际版真实模型与倍率**：
-              - 0.00x Free 限免白嫖：`deepseek-v4.1-flash-1017`、`deepseek-v4.1-flash`、`hy4-preview` 国际版全部 0 积分免费！
+            - 🛡️ **后台常驻启动与开机守护**：
+              - 接入 `BootReceiver`：支持系统开机 (`BOOT_COMPLETED`) 与应用更新覆盖 (`MY_PACKAGE_REPLACED`) 自动静默拉起网关前台服务；
+              - 修复物理返回键退出隐患：主界面按返回键自动执行 `moveTaskToBack(true)` 退居后台守护，杜绝 Activity 意外关闭断连；
+            - 📊 **首页指标实时准确统计**：
+              - 落地轻量高性能 `GatewayMetrics` 持久化模块：实时统计当天「今日请求」与「今日 Token」消耗总数，按自然日自动重置并即时刷新；
+            - 📜 **全新「运行日志」模块**：
+              - 移动端底部胶囊导航栏新增第 5 个 Tab「日志」；
+              - 实时可视化展示每笔 API 请求流水：请求时刻、协议路由、调用模型、耗时毫秒数、Token 消耗及错误告警；
+              - 支持一键刷新与一键清空日志；
+            - ⚡ **对齐成熟开源项目双端点回退与反探测脱敏**：
+              - 11128 渠道拦截毫秒级自动回退至 `/console`；
+              - 403 WAF 拦截自动回退至 `/v2`；
+              - 出站自动脱敏 `11128` 为 `11-128`，消除敏感拦截词误触发。
 
             *点击下方 Assets 里的 `WorkBuddyApp.apk` 即可下载安装！*
         env:

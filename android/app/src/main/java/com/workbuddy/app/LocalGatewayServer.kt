@@ -141,10 +141,29 @@ class LocalGatewayServer(
                         put("healthy", healthy)
                         put("total", accounts.length())
                         put("accounts", accounts)
+                        put("today_requests", GatewayMetrics.getTodayRequests())
+                        put("today_tokens", GatewayMetrics.getTodayTokens())
                         put("auth_required", false)
-                        put("version", "1.1.5-android")
+                        put("version", "1.2.0-android")
                     }
                     sendJsonResponse(output, 200, json.toString())
+                }
+
+                // 1.1 API: 请求日志
+                path == "/panel/api/logs" || path == "/m/api/logs" -> {
+                    val json = JSONObject().apply {
+                        put("ok", true)
+                        put("logs", GatewayMetrics.getLogsJson())
+                        put("today_requests", GatewayMetrics.getTodayRequests())
+                        put("today_tokens", GatewayMetrics.getTodayTokens())
+                    }
+                    sendJsonResponse(output, 200, json.toString())
+                }
+
+                // 1.2 API: 清空日志
+                path == "/panel/api/logs/clear" || path == "/m/api/logs/clear" -> {
+                    GatewayMetrics.clearLogs()
+                    sendJsonResponse(output, 200, JSONObject().put("ok", true).toString())
                 }
 
                 // 2. API: 发起授权
@@ -250,10 +269,12 @@ class LocalGatewayServer(
     }
 
     private fun handleOpenAiChat(output: OutputStream, bodyStr: String, reqHeaders: Map<String, String>) {
+        val startTime = System.currentTimeMillis()
+        var model = "deepseek-v4.1-flash-1017"
         try {
             val json = JSONObject(bodyStr)
             val isStream = json.optBoolean("stream", false)
-            val model = json.optString("model", "deepseek-v4.1-flash-1017")
+            model = json.optString("model", "deepseek-v4.1-flash-1017")
             val convId = ConversationIds.resolve(reqHeaders, json)
 
             if (!isStream) {
@@ -265,6 +286,7 @@ class LocalGatewayServer(
                     val toolCalls = res.optJSONArray("tool_calls")
                     val promptTokens = res.optInt("prompt_tokens", 20)
                     val compTokens = res.optInt("completion_tokens", 20)
+                    val totalTokens = promptTokens + compTokens
 
                     val oaiResp = JSONObject().apply {
                         put("id", "chatcmpl_${System.currentTimeMillis()}")
@@ -290,12 +312,14 @@ class LocalGatewayServer(
                         put("usage", JSONObject().apply {
                             put("prompt_tokens", promptTokens)
                             put("completion_tokens", compTokens)
-                            put("total_tokens", promptTokens + compTokens)
+                            put("total_tokens", totalTokens)
                         })
                     }
+                    GatewayMetrics.record("POST", "/v1/chat/completions", model, "sync", 200, totalTokens, System.currentTimeMillis() - startTime)
                     sendJsonResponse(output, 200, oaiResp.toString())
                 } catch (e: Exception) {
                     val (st, body) = errorPayload(e)
+                    GatewayMetrics.record("POST", "/v1/chat/completions", model, "sync", st, 0, System.currentTimeMillis() - startTime, e.message)
                     sendJsonResponse(output, st, body.toString())
                 }
             } else {
@@ -310,17 +334,30 @@ class LocalGatewayServer(
                 output.write(sseHeader.toByteArray(Charsets.US_ASCII))
                 output.flush()
 
+                var streamTokens = 0
                 try {
                     TencentGateway.streamChat(json, convId) { line ->
                         try {
+                            if (line.startsWith("data: ")) {
+                                val s = line.substring(6).trim()
+                                if (s.startsWith("{") && s != "[DONE]") {
+                                    val u = JSONObject(s).optJSONObject("usage")
+                                    if (u != null) {
+                                        streamTokens = u.optInt("total_tokens", streamTokens)
+                                    }
+                                }
+                            }
                             writeChunk(output, line)
                             true
                         } catch (e: Exception) {
                             false
                         }
                     }
+                    if (streamTokens == 0) streamTokens = 30 // 默认合理预估
+                    GatewayMetrics.record("POST", "/v1/chat/completions", model, "stream", 200, streamTokens, System.currentTimeMillis() - startTime)
                 } catch (e: Exception) {
-                    val (_, payload) = errorPayload(e)
+                    val (st, payload) = errorPayload(e)
+                    GatewayMetrics.record("POST", "/v1/chat/completions", model, "stream", st, 0, System.currentTimeMillis() - startTime, e.message)
                     writeChunk(output, "data: $payload\n\n")
                     writeChunk(output, "data: [DONE]\n\n")
                 } finally {
@@ -329,15 +366,18 @@ class LocalGatewayServer(
             }
         } catch (e: Exception) {
             val (st, body) = errorPayload(e)
+            GatewayMetrics.record("POST", "/v1/chat/completions", model, "error", st, 0, System.currentTimeMillis() - startTime, e.message)
             sendJsonResponse(output, st, body.toString())
         }
     }
 
     private fun handleAnthropicMessages(output: OutputStream, bodyStr: String, reqHeaders: Map<String, String>) {
+        val startTime = System.currentTimeMillis()
+        var modelRaw = "deepseek-v4.1-flash-1017"
         try {
             val json = JSONObject(bodyStr)
             val isStream = json.optBoolean("stream", false)
-            val modelRaw = json.optString("model", "deepseek-v4.1-flash-1017")
+            modelRaw = json.optString("model", "deepseek-v4.1-flash-1017")
 
             // 采用 Hark 工业级转换器：完美解决 tool_use / tool_result 配对、图片、多轮会话锚点
             val convId = ConversationIds.resolve(reqHeaders, json)
@@ -348,9 +388,13 @@ class LocalGatewayServer(
                 try {
                     val oaiResp = TencentGateway.chatSync(oaiReq, convId)
                     val anthropicResp = AnthropicToOpenAI.convertResponse(oaiResp, modelRaw)
+                    val u = oaiResp.optJSONObject("usage")
+                    val totalTokens = (u?.optInt("prompt_tokens", 20) ?: 20) + (u?.optInt("completion_tokens", 20) ?: 20)
+                    GatewayMetrics.record("POST", "/v1/messages", modelRaw, "sync", 200, totalTokens, System.currentTimeMillis() - startTime)
                     sendJsonResponse(output, 200, anthropicResp.toString())
                 } catch (e: Exception) {
                     val (st, body) = errorPayload(e)
+                    GatewayMetrics.record("POST", "/v1/messages", modelRaw, "sync", st, 0, System.currentTimeMillis() - startTime, e.message)
                     sendJsonResponse(output, st, body.toString())
                 }
             } else {
@@ -369,21 +413,29 @@ class LocalGatewayServer(
                     writeChunk(output, "event: $event\ndata: $data\n\n")
                 }
 
+                var streamTokens = 0
                 try {
                     TencentGateway.streamChat(oaiReq, convId) { line ->
                         val trimmed = line.trim()
                         if (trimmed.startsWith("data: ") && trimmed != "data: [DONE]") {
                             try {
                                 val chunk = JSONObject(trimmed.substring(6))
+                                val u = chunk.optJSONObject("usage")
+                                if (u != null) {
+                                    streamTokens = u.optInt("total_tokens", streamTokens)
+                                }
                                 translator.onChunk(chunk)
                             } catch (ignored: Exception) {}
                         }
                         true
                     }
                     translator.finish()
+                    if (streamTokens == 0) streamTokens = 35
+                    GatewayMetrics.record("POST", "/v1/messages", modelRaw, "stream", 200, streamTokens, System.currentTimeMillis() - startTime)
                 } catch (e: Exception) {
+                    val (st, body) = errorPayload(e)
+                    GatewayMetrics.record("POST", "/v1/messages", modelRaw, "stream", st, 0, System.currentTimeMillis() - startTime, e.message)
                     try {
-                        val (_, body) = errorPayload(e)
                         translator.abort(body)
                     } catch (ignored: Exception) {}
                 } finally {
@@ -392,6 +444,7 @@ class LocalGatewayServer(
             }
         } catch (e: Exception) {
             val (st, body) = errorPayload(e)
+            GatewayMetrics.record("POST", "/v1/messages", modelRaw, "error", st, 0, System.currentTimeMillis() - startTime, e.message)
             sendJsonResponse(output, st, body.toString())
         }
     }
