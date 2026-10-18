@@ -452,14 +452,15 @@ object TencentGateway {
                 okHttpClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) {
                         val body = resp.body?.string().orEmpty()
-                        val snippet = if (body.contains("WAF Block Page")) {
+                        val errCode = upstreamCode(body)
+                        val snippet = if (isWafBlocked(resp.code, body)) {
                             "Tencent Cloud WAF blocked request (pattern in prompt)"
                         } else {
                             body.take(300)
                         }
-                        val err = UpstreamException(resp.code, code, url, snippet)
+                        val err = UpstreamException(resp.code, errCode, url, snippet)
                         Log.w(TAG, err.message ?: "")
-                        if (!isLast && shouldTryNext(resp.code, code, body)) {
+                        if (!isLast && shouldTryNext(resp.code, errCode, body)) {
                             lastErr = err
                             return@use
                         }
