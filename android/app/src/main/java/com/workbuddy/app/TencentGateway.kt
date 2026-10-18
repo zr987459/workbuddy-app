@@ -374,7 +374,8 @@ object TencentGateway {
         val machineId = sha256Prefix("wb2a:machine:$uid")
         val sessionId = sha256Prefix("wb2a:session:$uid")
 
-        val endpoints = listOf("$base/console/chat/completions", "$base/v2/chat/completions")
+        // 优先官方 CLI/IDE 专属标准端点 /v2（无控制台敏感命令 WAF 阻断），/console 仅作 404 兜底
+        val endpoints = listOf("$base/v2/chat/completions", "$base/console/chat/completions")
 
         val cId = convId ?: UUID.randomUUID().toString().replace("-", "")
 
@@ -420,7 +421,12 @@ object TencentGateway {
                 okHttpClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) {
                         val body = resp.body?.string().orEmpty()
-                        val err = UpstreamException(resp.code, upstreamCode(body), url, body.take(500))
+                        val snippet = if (body.contains("WAF Block Page")) {
+                            "Tencent Cloud WAF blocked request (pattern in prompt)"
+                        } else {
+                            body.take(300)
+                        }
+                        val err = UpstreamException(resp.code, upstreamCode(body), url, snippet)
                         Log.w(TAG, err.message ?: "")
                         if (!isLast && shouldTryNext(resp.code)) {
                             lastErr = err

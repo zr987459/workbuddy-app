@@ -11,8 +11,8 @@ android {
         applicationId = "com.workbuddy.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 14
-        versionName = "1.1.3"
+        versionCode = 15
+        versionName = "1.1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

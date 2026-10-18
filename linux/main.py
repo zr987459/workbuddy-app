@@ -337,7 +337,7 @@ async def chat_completions(request: Request):
         finish_reason = "stop"
 
         async with httpx.AsyncClient(proxy=get_proxy(), timeout=120.0) as client:
-            async with client.stream("POST", f"{upstream_base}/console/chat/completions", headers=headers, json=upstream_payload) as resp:
+            async with client.stream("POST", f"{upstream_base}/v2/chat/completions", headers=headers, json=upstream_payload) as resp:
                 if resp.status_code != 200:
                     err = await resp.aread()
                     return JSONResponse(status_code=resp.status_code, content={"error": {"message": err.decode(errors="ignore")}})
@@ -398,7 +398,7 @@ async def chat_completions(request: Request):
             try:
                 async with client.stream(
                     "POST",
-                    f"{upstream_base}/console/chat/completions",
+                    f"{upstream_base}/v2/chat/completions",
                     headers=headers,
                     json=upstream_payload
                 ) as resp:
@@ -532,7 +532,7 @@ async def anthropic_messages(request: Request):
                 out_count = 0
                 async with client.stream(
                     "POST",
-                    f"{upstream_base}/console/chat/completions",
+                    f"{upstream_base}/v2/chat/completions",
                     headers=headers,
                     json=upstream_payload
                 ) as resp:

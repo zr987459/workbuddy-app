@@ -142,7 +142,7 @@ class LocalGatewayServer(
                         put("total", accounts.length())
                         put("accounts", accounts)
                         put("auth_required", false)
-                        put("version", "1.1.3-android")
+                        put("version", "1.1.4-android")
                     }
                     sendJsonResponse(output, 200, json.toString())
                 }
