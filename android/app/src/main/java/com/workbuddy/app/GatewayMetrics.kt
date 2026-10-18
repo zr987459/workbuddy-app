@@ -43,6 +43,7 @@ object GatewayMetrics {
         }
     }
 
+    @Synchronized
     private fun checkDateRollover() {
         if (!::prefs.isInitialized) return
         val today = dateFormat.format(Date())
