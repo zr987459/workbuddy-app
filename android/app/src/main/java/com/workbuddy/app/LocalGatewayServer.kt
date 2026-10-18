@@ -144,7 +144,7 @@ class LocalGatewayServer(
                         put("today_requests", GatewayMetrics.getTodayRequests())
                         put("today_tokens", GatewayMetrics.getTodayTokens())
                         put("auth_required", false)
-                        put("version", "1.2.1-android")
+                        put("version", "1.3.0-android")
                     }
                     sendJsonResponse(output, 200, json.toString())
                 }
@@ -164,6 +164,26 @@ class LocalGatewayServer(
                 path == "/panel/api/logs/clear" || path == "/m/api/logs/clear" -> {
                     GatewayMetrics.clearLogs()
                     sendJsonResponse(output, 200, JSONObject().put("ok", true).toString())
+                }
+
+                // 1.3 API: 导出 Token
+                path == "/panel/api/tokens/export" || path == "/m/api/tokens/export" -> {
+                    sendJsonResponse(output, 200, AccountVault.exportTokensJson())
+                }
+
+                // 1.4 API: 导入 Token (支持 JWT 或 JSON 格式)
+                path == "/panel/api/tokens/import" || path == "/m/api/tokens/import" -> {
+                    val raw = try { JSONObject(body).optString("raw", body) } catch (e: Exception) { body }
+                    val (success, msg) = AccountVault.importToken(raw)
+                    val res = JSONObject().put("ok", success).put("msg", msg)
+                    sendJsonResponse(output, 200, res.toString())
+                }
+
+                // 1.5 API: 删除账号
+                path == "/panel/api/accounts/delete" || path == "/m/api/accounts/delete" -> {
+                    val uid = try { JSONObject(body).optString("uid") } catch (e: Exception) { "" }
+                    val deleted = if (uid.isNotEmpty()) AccountVault.deleteAccount(uid) else false
+                    sendJsonResponse(output, 200, JSONObject().put("ok", deleted).toString())
                 }
 
                 // 2. API: 发起授权

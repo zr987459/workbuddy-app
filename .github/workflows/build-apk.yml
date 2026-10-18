@@ -50,27 +50,27 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.2.1
-          name: "WorkBuddy App v1.2.1 (纯安卓独立版 · 前端热更新同步与常驻守护)"
+          tag_name: v1.3.0
+          name: "WorkBuddy App v1.3.0 (纯安卓独立版 · 状态栏常驻通知+凭据导入导出)"
           target_commitish: ${{ github.sha }}
           prerelease: false
           files: dist/WorkBuddyApp.apk
           body: |
-            ### 📱 WorkBuddy App (纯安卓独立版 v1.2.1)
+            ### 📱 WorkBuddy App (纯安卓独立版 v1.3.0)
 
-            - 🎨 **同步打包真实移动端前端 Assets**：
-              - 修复了之前只改动根目录 `web/` 而未同步更新至 Android 原生 assets 目录导致界面未变更的打包缺陷；
-              - 底部胶囊导航栏正式装配第 5 个 Tab「📜 日志」，主界面「今日请求」与「今日 Token」实时展示真实调用与消耗；
-              - WebView 启用 `LOAD_NO_CACHE` 并自动清除历史静态缓存，保证每次安装更新立刻呈现最新视觉；
-            - 🛡️ **后台常驻启动与开机守护**：
-              - 接入 `BootReceiver`：支持系统开机 (`BOOT_COMPLETED`) 与应用更新覆盖 (`MY_PACKAGE_REPLACED`) 自动静默拉起网关前台服务；
-              - 修复物理返回键退出隐患：主界面按返回键自动执行 `moveTaskToBack(true)` 退居后台守护，杜绝 Activity 意外关闭断连；
+            - 🔔 **Android 状态栏常驻通知与权限自动引导**：
+              - 适配 Android 13+ (API 33+) 动态 `POST_NOTIFICATIONS` 运行时权限申请，彻底解决高版本 Android 状态栏图标被静默隐藏的问题；
+              - 通知渠道提升为 `IMPORTANCE_DEFAULT`，常驻图标显示在系统顶部状态栏，下拉展示网关守护状态与一键点击直达面板；
+            - 🔑 **账号凭据 (Token) 完备导入与导出**：
+              - 账号页新增「📥 导入」与「📤 导出」双通道：
+                - 支持粘贴单条/多条裸 JWT（以 `eyJ` 开头），自动 Base64 解析 `sub`、`nickname` 等字段入库；
+                - 支持直接导入/导出完整备份 JSON（与 CookieBox、wb_manager 格式无缝互通）；
+                - 账号卡片新增一键「删除」移除无用凭据；
+            - 📜 **移动端第 5 个 Tab「运行日志」完备生效**：
+              - 修复打包 assets 静态资源映射；
+              - 真实记录每笔 API 调用请求时刻、协议路由、模型、状态码、Token 消耗量与耗时；
             - 📊 **首页指标实时准确统计**：
-              - 落地轻量高性能 `GatewayMetrics` 持久化模块：实时统计当天「今日请求」与「今日 Token」消耗总数，按自然日自动重置并即时刷新；
-            - ⚡ **对齐成熟开源项目双端点回退与反探测脱敏**：
-              - 11128 渠道拦截毫秒级自动回退至 `/console`；
-              - 403 WAF 拦截自动回退至 `/v2`；
-              - 出站自动脱敏 `11128` 为 `11-128`，消除敏感拦截词误触发。
+              - 落地轻量高性能 `GatewayMetrics` 持久化模块，按自然日自动清零，首页「今日请求」与「今日 Token」即时刷新。
 
             *点击下方 Assets 里的 `WorkBuddyApp.apk` 即可下载安装！*
         env:

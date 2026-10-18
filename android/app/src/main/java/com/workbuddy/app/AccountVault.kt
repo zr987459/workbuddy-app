@@ -131,6 +131,108 @@ object AccountVault {
     }
 
     @Synchronized
+    fun deleteAccount(uid: String): Boolean {
+        val list = getAccounts()
+        val next = JSONArray()
+        var found = false
+        for (i in 0 until list.length()) {
+            val a = list.getJSONObject(i)
+            if (a.optString("uid") == uid) {
+                found = true
+            } else {
+                next.put(a)
+            }
+        }
+        prefs.edit().putString(KEY_ACCOUNTS, next.toString()).apply()
+
+        try {
+            val authsDir = File(appContext.filesDir, "auths")
+            val f = File(authsDir, "workbuddy-$uid.json")
+            if (f.exists()) f.delete()
+        } catch (ignored: Exception) {}
+
+        return found
+    }
+
+    @Synchronized
+    fun exportTokensJson(): String {
+        return getAccounts().toString(2)
+    }
+
+    @Synchronized
+    fun importToken(rawInput: String): Pair<Boolean, String> {
+        val trimmed = rawInput.trim()
+        if (trimmed.isEmpty()) return false to "导入内容不能为空"
+
+        var importedCount = 0
+
+        // 1. 尝试作为 JSON 数组导入
+        if (trimmed.startsWith("[")) {
+            try {
+                val arr = JSONArray(trimmed)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    val uid = obj.optString("uid").ifEmpty { "user_${UUID.randomUUID().toString().take(8)}" }
+                    val nickname = obj.optString("nickname", "导入用户")
+                    val realm = obj.optString("realm", "global")
+                    val token = obj.optString("accessToken", obj.optString("access_token", obj.optString("token")))
+                    val refresh = obj.optString("refreshToken", obj.optString("refresh_token", ""))
+                    if (token.isNotEmpty()) {
+                        saveAccount(uid, nickname, realm, token, refresh)
+                        importedCount++
+                    }
+                }
+                return if (importedCount > 0) true to "成功导入 $importedCount 个账号" else false to "未在数组中解析到有效 Token"
+            } catch (e: Exception) {}
+        }
+
+        // 2. 尝试作为单个 JSON 对象导入（CookieBox / auth 对象）
+        if (trimmed.startsWith("{")) {
+            try {
+                val obj = JSONObject(trimmed)
+                val acct = obj.optJSONObject("account") ?: obj
+                val auth = obj.optJSONObject("auth") ?: obj
+                val uid = acct.optString("uid", obj.optString("uid")).ifEmpty { "user_${UUID.randomUUID().toString().take(8)}" }
+                val nickname = acct.optString("nickname", obj.optString("nickname", "导入用户"))
+                val realm = auth.optString("realm", obj.optString("realm", "global"))
+                val token = auth.optString("accessToken", obj.optString("access_token", obj.optString("token")))
+                val refresh = auth.optString("refreshToken", obj.optString("refresh_token", ""))
+                if (token.isNotEmpty()) {
+                    saveAccount(uid, nickname, realm, token, refresh)
+                    return true to "成功导入账号：$nickname"
+                }
+            } catch (e: Exception) {}
+        }
+
+        // 3. 尝试作为单行或多行裸 JWT 导入 (以 eyJ 开头)
+        val lines = trimmed.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+        for (line in lines) {
+            val token = if (line.startsWith("Bearer ", ignoreCase = true)) line.substring(7).trim() else line
+            if (token.startsWith("eyJ") && token.count { it == '.' } >= 2) {
+                try {
+                    val parts = token.split('.')
+                    val payloadBytes = android.util.Base64.decode(parts[1], android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING)
+                    val payloadObj = JSONObject(String(payloadBytes, Charsets.UTF_8))
+                    val uid = payloadObj.optString("sub", "user_${UUID.randomUUID().toString().take(8)}")
+                    val nickname = payloadObj.optString("preferred_username", payloadObj.optString("name", payloadObj.optString("email", "WorkBuddy用户")))
+                    saveAccount(uid, nickname, "global", token, "")
+                    importedCount++
+                } catch (e: Exception) {
+                    val uid = "user_${UUID.randomUUID().toString().take(8)}"
+                    saveAccount(uid, "导入Token", "global", token, "")
+                    importedCount++
+                }
+            }
+        }
+
+        if (importedCount > 0) {
+            return true to "成功导入 $importedCount 个凭据"
+        }
+
+        return false to "未能识别有效凭据格式，请确保为 JWT 字符串 (eyJ...) 或导出 JSON 数组"
+    }
+
+    @Synchronized
     fun getActiveAccount(realm: String): JSONObject? {
         val list = getAccounts()
         for (i in 0 until list.length()) {

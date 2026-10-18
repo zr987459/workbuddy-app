@@ -29,6 +29,13 @@ class MainActivity : AppCompatActivity() {
             startService(serviceIntent)
         }
 
+        // Android 13+ 请求通知栏权限，确保状态栏常驻图标正常显示
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+            }
+        }
+
         webView = WebView(this).apply {
             settings.apply {
                 javaScriptEnabled = true

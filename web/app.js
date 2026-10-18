@@ -140,7 +140,10 @@ async function loadAccounts() {
               <div class="item-sub">UID: ${escapeHtml(a.uid)} ${creditsDisplay} · 消耗: ${tokensUsed} tokens</div>
             </div>
           </div>
-          <button class="btn btn-outline btn-sm" onclick="copyText('${escapeHtml(a.uid)}')">复制UID</button>
+          <div style="display: flex; gap: 6px;">
+            <button class="btn btn-outline btn-sm" onclick="copyText('${escapeHtml(a.uid)}')">复制UID</button>
+            <button class="btn btn-outline btn-sm" style="color: var(--danger); border-color: rgba(239, 68, 68, 0.4);" onclick="deleteAccount('${escapeHtml(a.uid)}')">删除</button>
+          </div>
         </div>`;
     }).join('');
   } catch (e) {
@@ -442,6 +445,82 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+async function deleteAccount(uid) {
+  if (!confirm('确定从本地移除此账号凭据吗？')) return;
+  try {
+    const res = await fetch('/panel/api/accounts/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid })
+    });
+    const d = await res.json();
+    if (d.ok) {
+      showToast('已移除账号凭据');
+      loadAccounts();
+      loadOverview();
+    } else {
+      alert('删除失败');
+    }
+  } catch (e) {
+    alert('请求失败: ' + e.message);
+  }
+}
+
+// 导入导出模块
+function openImportModal() {
+  document.getElementById('importModal').classList.add('active');
+  const input = document.getElementById('importInput');
+  input.value = '';
+  input.focus();
+}
+
+async function submitImport() {
+  const input = document.getElementById('importInput');
+  const raw = input.value.trim();
+  if (!raw) return alert('请输入要导入的凭据文本');
+
+  try {
+    const res = await fetch('/panel/api/tokens/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ raw })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast(data.msg || '导入成功！');
+      closeModal('importModal');
+      loadAccounts();
+      loadOverview();
+    } else {
+      alert('导入失败：' + (data.msg || JSON.stringify(data)));
+    }
+  } catch (e) {
+    alert('请求失败: ' + e.message);
+  }
+}
+
+async function openExportModal() {
+  const modal = document.getElementById('exportModal');
+  const output = document.getElementById('exportOutput');
+  output.value = '正在提取当前所有账号凭据...';
+  modal.classList.add('active');
+
+  try {
+    const res = await fetch('/panel/api/tokens/export', { cache: 'no-store' });
+    const text = await res.text();
+    output.value = text;
+  } catch (e) {
+    output.value = '提取失败: ' + e.message;
+  }
+}
+
+function copyExportJson() {
+  const output = document.getElementById('exportOutput');
+  if (output && output.value) {
+    copyText(output.value);
+  }
 }
 
 // 5. 运行日志

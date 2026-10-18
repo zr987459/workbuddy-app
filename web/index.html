@@ -75,7 +75,11 @@
   <main id="view-accounts" class="tab-content">
     <div class="section-title">
       <span>账号列表 (<span id="accountCount">0</span>)</span>
-      <button class="btn btn-primary btn-sm" onclick="openAuthModal()">+ 授权新账号</button>
+      <div style="display: flex; gap: 6px;">
+        <button class="btn btn-outline btn-sm" onclick="openImportModal()">📥 导入</button>
+        <button class="btn btn-outline btn-sm" onclick="openExportModal()">📤 导出</button>
+        <button class="btn btn-primary btn-sm" onclick="openAuthModal()">+ 授权</button>
+      </div>
     </div>
     <div id="accountList">
       <div style="text-align: center; padding: 40px; color: var(--text-dim);">加载账号中...</div>
@@ -207,6 +211,38 @@
       <div style="display: flex; gap: 8px;">
         <button class="btn btn-primary" style="flex: 1;" id="startAuthBtn" onclick="requestAuthLink()">获取授权链接</button>
         <button class="btn btn-outline" style="flex: 1;" onclick="closeModal('authModal')">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 导入弹窗 -->
+  <div class="modal-overlay" id="importModal">
+    <div class="modal-sheet">
+      <div class="sheet-handle"></div>
+      <div class="section-title">导入账号凭据</div>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 10px;">
+        支持直接粘贴 AccessToken（以 eyJ 开头）、CookieBox 提取结果或整段备份 JSON。
+      </p>
+      <textarea id="importInput" class="input-field" rows="6" style="width: 100%; font-family: var(--font-mono); font-size: 12px; margin-bottom: 12px; resize: vertical;" placeholder="请粘贴 JWT (eyJ...) 或导出的账号 JSON 文本..."></textarea>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-primary" style="flex: 1;" onclick="submitImport()">确认导入</button>
+        <button class="btn btn-outline" style="flex: 1;" onclick="closeModal('importModal')">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 导出弹窗 -->
+  <div class="modal-overlay" id="exportModal">
+    <div class="modal-sheet">
+      <div class="sheet-handle"></div>
+      <div class="section-title">导出账号凭据</div>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 10px;">
+        包含当前池中全部账号与完整 Token 备份。请妥善保管防泄露。
+      </p>
+      <textarea id="exportOutput" readonly class="input-field" rows="8" style="width: 100%; font-family: var(--font-mono); font-size: 11px; margin-bottom: 12px; background: rgba(0,0,0,0.4); resize: vertical;"></textarea>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-primary" style="flex: 1;" onclick="copyExportJson()">📋 复制全部</button>
+        <button class="btn btn-outline" style="flex: 1;" onclick="closeModal('exportModal')">关闭</button>
       </div>
     </div>
   </div>

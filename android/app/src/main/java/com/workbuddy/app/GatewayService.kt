@@ -76,10 +76,11 @@ class GatewayService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "WorkBuddy 原生网关服务",
-                NotificationManager.IMPORTANCE_LOW
+                "WorkBuddy 网关守护",
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = "保持 WorkBuddy 核心网关在后台持续运行"
+                setShowBadge(true)
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
@@ -94,11 +95,13 @@ class GatewayService : Service() {
         )
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("WorkBuddy 运行中")
-            .setContentText("本地网关端口 :8800 已就绪")
+            .setContentTitle("WorkBuddy 网关运行中")
+            .setContentText("本地端口 :8800 已就绪 · 后台持续常驻守护")
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
