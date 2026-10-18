@@ -269,7 +269,8 @@ object TencentGateway {
         }
 
         val fullR = sbReasoning.toString()
-        val uid = acc.optString("uid", "user_default")
+        val acc = AccountVault.getActiveAccount(realm)
+        val uid = acc?.optString("uid", "user_default") ?: "user_default"
         if (fullR.isNotEmpty()) {
             for (slot in toolCallsMap.values) {
                 val tid = slot.optString("id")
