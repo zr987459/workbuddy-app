@@ -189,12 +189,12 @@ class LocalGatewayServer(
 
                 // 5. API: OpenAI 标准流式与非流式对话 (完整透传 tools、reasoning_content、多模态)
                 path == "/v1/chat/completions" || path == "/v1/v1/chat/completions" -> {
-                    handleOpenAiChat(output, body)
+                    handleOpenAiChat(output, body, headers)
                 }
 
                 // 6. API: Anthropic Messages 协议全功能支持（双向映射 tools 与 thinking）
                 path == "/v1/messages" || path == "/v1/v1/messages" -> {
-                    handleAnthropicMessages(output, body)
+                    handleAnthropicMessages(output, body, headers)
                 }
 
                 // 7. 静态前端资源
@@ -236,15 +236,16 @@ class LocalGatewayServer(
         output.flush()
     }
 
-    private fun handleOpenAiChat(output: OutputStream, bodyStr: String) {
+    private fun handleOpenAiChat(output: OutputStream, bodyStr: String, reqHeaders: Map<String, String>) {
         try {
             val json = JSONObject(bodyStr)
             val isStream = json.optBoolean("stream", false)
             val model = json.optString("model", "deepseek-v4.1-flash-1017")
+            val convId = ConversationIds.resolve(reqHeaders, json)
 
             if (!isStream) {
                 // 非流式响应：上游透传，完整包含 reasoning_content 与 tool_calls
-                val res = TencentGateway.chatSync(json)
+                val res = TencentGateway.chatSync(json, convId)
                 val reply = res.optString("content")
                 val reasoning = res.optString("reasoning_content")
                 val toolCalls = res.optJSONArray("tool_calls")
@@ -292,7 +293,7 @@ class LocalGatewayServer(
                 output.flush()
 
                 try {
-                    TencentGateway.streamChat(json) { line ->
+                    TencentGateway.streamChat(json, convId) { line ->
                         try {
                             writeChunk(output, line)
                             true
@@ -311,154 +312,20 @@ class LocalGatewayServer(
         }
     }
 
-    /**
-     * Anthropic content → OpenAI content
-     * - 纯文本：输出字符串
-     * - 含图片：输出 OpenAI 多模态数组 [{type:text},{type:image_url,image_url:{url}}]
-     */
-    private fun anthropicContentToOpenAi(content: Any?): Any {
-        if (content is String) return content
-        if (content !is JSONArray) return ""
-
-        val parts = JSONArray()
-        var hasImage = false
-        val text = StringBuilder()
-
-        for (j in 0 until content.length()) {
-            val part = content.optJSONObject(j) ?: continue
-            when (part.optString("type")) {
-                "text" -> {
-                    val t = part.optString("text")
-                    text.append(t)
-                    parts.put(JSONObject().put("type", "text").put("text", t))
-                }
-                "image" -> {
-                    val src = part.optJSONObject("source") ?: continue
-                    val url = when (src.optString("type")) {
-                        "base64" -> "data:${src.optString("media_type", "image/png")};base64,${src.optString("data")}"
-                        "url" -> src.optString("url")
-                        else -> null
-                    }
-                    if (!url.isNullOrEmpty()) {
-                        hasImage = true
-                        parts.put(JSONObject()
-                            .put("type", "image_url")
-                            .put("image_url", JSONObject().put("url", url)))
-                    }
-                }
-            }
-        }
-        return if (hasImage) parts else text.toString()
-    }
-
-    private fun handleAnthropicMessages(output: OutputStream, bodyStr: String) {
+    private fun handleAnthropicMessages(output: OutputStream, bodyStr: String, reqHeaders: Map<String, String>) {
         try {
             val json = JSONObject(bodyStr)
             val isStream = json.optBoolean("stream", false)
             val modelRaw = json.optString("model", "deepseek-v4.1-flash-1017")
 
-            // 转换 Anthropic 格式为 OpenAI messages (完整保留多模态图片块)
-            val openaiMessages = JSONArray()
-            val systemObj = json.opt("system")
-            val systemPrompt = when (systemObj) {
-                is String -> systemObj.ifEmpty { TencentGateway.DEFAULT_SYSTEM_PROMPT }
-                is JSONArray -> {
-                    val sb = StringBuilder()
-                    for (k in 0 until systemObj.length()) {
-                        val part = systemObj.optJSONObject(k)
-                        if (part != null && part.optString("type") == "text") {
-                            sb.append(part.optString("text"))
-                        }
-                    }
-                    sb.toString().ifEmpty { TencentGateway.DEFAULT_SYSTEM_PROMPT }
-                }
-                else -> TencentGateway.DEFAULT_SYSTEM_PROMPT
-            }
-            openaiMessages.put(JSONObject().apply {
-                put("role", "system")
-                put("content", systemPrompt)
-            })
-
-            val messagesArr = json.optJSONArray("messages") ?: JSONArray()
-            for (i in 0 until messagesArr.length()) {
-                val m = messagesArr.getJSONObject(i)
-                val role = m.optString("role", "user")
-                val contentObj = m.opt("content")
-                openaiMessages.put(JSONObject().apply {
-                    put("role", role)
-                    put("content", anthropicContentToOpenAi(contentObj))
-                })
-            }
-
-            // 转换 Anthropic tools → OpenAI tools
-            val anthropicTools = json.optJSONArray("tools")
-            val openaiTools = JSONArray()
-            if (anthropicTools != null && anthropicTools.length() > 0) {
-                for (tIdx in 0 until anthropicTools.length()) {
-                    val at = anthropicTools.optJSONObject(tIdx) ?: continue
-                    openaiTools.put(JSONObject().apply {
-                        put("type", "function")
-                        put("function", JSONObject().apply {
-                            put("name", at.optString("name"))
-                            put("description", at.optString("description"))
-                            put("parameters", at.optJSONObject("input_schema") ?: JSONObject())
-                        })
-                    })
-                }
-            }
-
-            // 组装上游请求体
-            val upstreamBody = JSONObject(json.toString()).apply {
-                put("messages", openaiMessages)
-                if (openaiTools.length() > 0) {
-                    put("tools", openaiTools)
-                }
-            }
-
-            val msgId = "msg_${System.currentTimeMillis()}"
+            // 采用 Hark 工业级转换器：完美解决 tool_use / tool_result 配对、图片、多轮会话锚点
+            val convId = ConversationIds.resolve(reqHeaders, json)
+            val oaiReq = AnthropicToOpenAI.convertRequest(json)
 
             if (!isStream) {
                 // 1. 非流式响应
-                val res = TencentGateway.chatSync(upstreamBody)
-                val replyContent = res.optString("content")
-                val toolCalls = res.optJSONArray("tool_calls")
-                val promptTokens = res.optInt("prompt_tokens", 20)
-                val compTokens = res.optInt("completion_tokens", 20)
-
-                val contentArray = JSONArray()
-                if (replyContent.isNotEmpty()) {
-                    contentArray.put(JSONObject().apply {
-                        put("type", "text")
-                        put("text", replyContent)
-                    })
-                }
-                if (toolCalls != null) {
-                    for (cIdx in 0 until toolCalls.length()) {
-                        val tc = toolCalls.getJSONObject(cIdx)
-                        val fn = tc.optJSONObject("function")
-                        contentArray.put(JSONObject().apply {
-                            put("type", "tool_use")
-                            put("id", tc.optString("id"))
-                            put("name", fn?.optString("name"))
-                            put("input", try { JSONObject(fn?.optString("arguments") ?: "{}") } catch (e: Exception) { JSONObject() })
-                        })
-                    }
-                }
-
-                val anthropicResp = JSONObject().apply {
-                    put("id", msgId)
-                    put("type", "message")
-                    put("role", "assistant")
-                    put("content", contentArray)
-                    put("model", modelRaw)
-                    put("stop_reason", if (toolCalls != null) "tool_use" else "end_turn")
-                    put("stop_sequence", JSONObject.NULL)
-                    put("usage", JSONObject().apply {
-                        put("input_tokens", promptTokens)
-                        put("output_tokens", compTokens)
-                    })
-                }
-
+                val oaiResp = TencentGateway.chatSync(oaiReq, convId)
+                val anthropicResp = AnthropicToOpenAI.convertResponse(oaiResp, modelRaw)
                 sendJsonResponse(output, 200, anthropicResp.toString())
             } else {
                 // 2. 流式响应 (支持 thinking 与 tool_use 事件)
@@ -472,119 +339,22 @@ class LocalGatewayServer(
                 output.write(sseHeader.toByteArray(Charsets.US_ASCII))
                 output.flush()
 
+                val translator = AnthropicStreamTranslator(modelRaw) { event, data ->
+                    writeChunk(output, "event: $event\ndata: $data\n\n")
+                }
+
                 try {
-                    // message_start
-                    writeChunk(output, "event: message_start\ndata: ${JSONObject().apply {
-                        put("type", "message_start")
-                        put("message", JSONObject().apply {
-                            put("id", msgId)
-                            put("type", "message")
-                            put("role", "assistant")
-                            put("content", JSONArray())
-                            put("model", modelRaw)
-                            put("stop_reason", JSONObject.NULL)
-                            put("stop_sequence", JSONObject.NULL)
-                            put("usage", JSONObject().apply {
-                                put("input_tokens", 20)
-                                put("output_tokens", 0)
-                            })
-                        })
-                    }}\n\n")
-
-                    writeChunk(output, "event: content_block_start\ndata: ${JSONObject().apply {
-                        put("type", "content_block_start")
-                        put("index", 0)
-                        put("content_block", JSONObject().apply {
-                            put("type", "text")
-                            put("text", "")
-                        })
-                    }}\n\n")
-
-                    writeChunk(output, "event: ping\ndata: ${JSONObject().apply { put("type", "ping") }}\n\n")
-
-                    var outputTokenCount = 0
-                    var hasToolCall = false
-
-                    TencentGateway.streamChat(upstreamBody) { line ->
+                    TencentGateway.streamChat(oaiReq, convId) { line ->
                         val trimmed = line.trim()
-                        if (trimmed.isNotEmpty() && trimmed != "data: [DONE]" && trimmed.startsWith("data: ")) {
+                        if (trimmed.startsWith("data: ") && trimmed != "data: [DONE]") {
                             try {
                                 val chunk = JSONObject(trimmed.substring(6))
-                                val delta = chunk.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")
-                                if (delta != null) {
-                                    // 1. 思考增量 (reasoning_content → thinking_delta)
-                                    val reasoning = delta.optString("reasoning_content", "")
-                                    if (reasoning.isNotEmpty()) {
-                                        outputTokenCount++
-                                        writeChunk(output, "event: content_block_delta\ndata: ${JSONObject().apply {
-                                            put("type", "content_block_delta")
-                                            put("index", 0)
-                                            put("delta", JSONObject().apply {
-                                                put("type", "thinking_delta")
-                                                put("thinking", reasoning)
-                                            })
-                                        }}\n\n")
-                                    }
-
-                                    // 2. 正文增量 (content → text_delta)
-                                    val textDelta = delta.optString("content", "")
-                                    if (textDelta.isNotEmpty()) {
-                                        outputTokenCount++
-                                        writeChunk(output, "event: content_block_delta\ndata: ${JSONObject().apply {
-                                            put("type", "content_block_delta")
-                                            put("index", 0)
-                                            put("delta", JSONObject().apply {
-                                                put("type", "text_delta")
-                                                put("text", textDelta)
-                                            })
-                                        }}\n\n")
-                                    }
-
-                                    // 3. 工具调用增量
-                                    val toolCalls = delta.optJSONArray("tool_calls")
-                                    if (toolCalls != null && toolCalls.length() > 0) {
-                                        hasToolCall = true
-                                        for (tcIdx in 0 until toolCalls.length()) {
-                                            val tc = toolCalls.getJSONObject(tcIdx)
-                                            val fn = tc.optJSONObject("function")
-                                            val argDelta = fn?.optString("arguments", "") ?: ""
-                                            if (argDelta.isNotEmpty()) {
-                                                writeChunk(output, "event: content_block_delta\ndata: ${JSONObject().apply {
-                                                    put("type", "content_block_delta")
-                                                    put("index", 0)
-                                                    put("delta", JSONObject().apply {
-                                                        put("type", "input_json_delta")
-                                                        put("partial_json", argDelta)
-                                                    })
-                                                }}\n\n")
-                                            }
-                                        }
-                                    }
-                                }
+                                translator.onChunk(chunk)
                             } catch (ignored: Exception) {}
                         }
                         true
                     }
-
-                    writeChunk(output, "event: content_block_stop\ndata: ${JSONObject().apply {
-                        put("type", "content_block_stop")
-                        put("index", 0)
-                    }}\n\n")
-
-                    writeChunk(output, "event: message_delta\ndata: ${JSONObject().apply {
-                        put("type", "message_delta")
-                        put("delta", JSONObject().apply {
-                            put("stop_reason", if (hasToolCall) "tool_use" else "end_turn")
-                            put("stop_sequence", JSONObject.NULL)
-                        })
-                        put("usage", JSONObject().apply {
-                            put("output_tokens", maxOf(outputTokenCount, 1))
-                        })
-                    }}\n\n")
-
-                    writeChunk(output, "event: message_stop\ndata: ${JSONObject().apply {
-                        put("type", "message_stop")
-                    }}\n\n")
+                    translator.finish()
                 } catch (e: Exception) {
                     try {
                         writeChunk(output, "event: error\ndata: ${JSONObject().apply {

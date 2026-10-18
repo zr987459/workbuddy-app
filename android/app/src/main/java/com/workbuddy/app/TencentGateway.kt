@@ -154,7 +154,7 @@ object TencentGateway {
         }
     }
 
-    fun chatSync(payload: JSONObject): JSONObject {
+    fun chatSync(payload: JSONObject, convId: String? = null): JSONObject {
         val sb = StringBuilder()
         val sbReasoning = StringBuilder()
         var lastChunkPromptTokens = 20
@@ -162,7 +162,7 @@ object TencentGateway {
         var upstreamError: String? = null
         val toolCallsMap = HashMap<Int, JSONObject>()
 
-        streamChat(payload) { line ->
+        streamChat(payload, convId) { line ->
             val trimmed = line.trim()
             if (trimmed.startsWith("data: ") && trimmed != "data: [DONE]") {
                 try {
@@ -250,6 +250,7 @@ object TencentGateway {
      */
     fun streamChat(
         payload: JSONObject,
+        convId: String? = null,
         onLine: (String) -> Boolean
     ) {
         val modelRaw = payload.optString("model", "deepseek-v4.1-flash-1017")
@@ -297,6 +298,8 @@ object TencentGateway {
 
         val endpoints = listOf("$base/console/chat/completions", "$base/v2/chat/completions")
 
+        val cId = convId ?: UUID.randomUUID().toString().replace("-", "")
+
         for (url in endpoints) {
             val reqBuilder = Request.Builder()
                 .url(url)
@@ -317,7 +320,7 @@ object TencentGateway {
                 .header("X-IDE-Version", "5.5.4")
                 .header("X-Machine-ID", machineId)
                 .header("X-Session-ID", sessionId)
-                .header("X-Conversation-ID", UUID.randomUUID().toString().replace("-", ""))
+                .header("X-Conversation-ID", cId)
                 .header("X-Conversation-Request-ID", UUID.randomUUID().toString().replace("-", ""))
                 .header("X-Conversation-Message-ID", UUID.randomUUID().toString().replace("-", ""))
                 .header("X-Root-Request-ID", UUID.randomUUID().toString().replace("-", ""))

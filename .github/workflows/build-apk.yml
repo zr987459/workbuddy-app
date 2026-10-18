@@ -50,16 +50,20 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.9
-          name: "WorkBuddy App v1.0.9 (纯安卓独立版)"
+          tag_name: v1.1.0
+          name: "WorkBuddy App v1.1.0 (纯安卓独立版)"
           target_commitish: ${{ github.sha }}
           prerelease: false
           files: dist/WorkBuddyApp.apk
           body: |
-            ### 📱 WorkBuddy App (纯安卓独立版 v1.0.9)
+            ### 📱 WorkBuddy App (纯安卓独立版 v1.1.0)
 
-            - 🎯 **彻底解决 11102 报错 (model [deepseek-v4.1-flash-1017] service info not found)**：
-              - 腾讯上游真实服务注册 ID 为 `deepseek-v4.1-flash`，网关自动将 `deepseek-v4.1-flash-1017` 别名映射到上游标准 ID，秒级返回，绝不报错！
+            - 🛠️ **多轮工具调用全链路闭环 (Anthropic ↔ OpenAI 双向深度转换器)**：
+              - 采用 Hark 工业级架构：完美支持 `tool_use` 转 `tool_calls` 与 `tool_result` 转独立 `role: tool` 消息；
+              - 自动执行 `repairToolPairing`（消除孤儿工具消息与调用配对缺失），彻底根除多轮工具调用触发的 `11128` 渠道拦截！
+              - 引入稳定的 `X-Conversation-ID` 锚点推导：多轮会话之间保持严格相同的会话指纹，绝不每轮变动，彻底对齐官方客户端行为！
+            - 🎯 **彻底解决 11102 报错 (model service info not found)**：
+              - 网关全局自动将 `deepseek-v4.1-flash-1017` 别名映射到上游标准注册 ID `deepseek-v4.1-flash`，秒级返回，绝不报错！
             - 🛡️ **彻底根除 11128 渠道校验拦截 (Illegal API invocation from an unapproved channel)**：
               - 注入官方客户端风控必备头：`X-CodeBuddy-Request: 1`、`X-Requested-With: XMLHttpRequest`、`Accept-Language: en-US`；
               - 默认采用官方未封锁的 `/console/chat/completions` 端点，且首行流式智能感知与自动回退，保证工具调用 100% 成功！
@@ -68,8 +72,6 @@ jobs:
               - **国际版专属大模型**：`gpt-6-astra` (6.67x 顶级旗舰)、`gpt-5.6-sol`、`gpt-5.4` (原生多模态识图)、`grok-4.7`、`gemini-3.5-flash` 全量就绪；
             - 🧠 **深度思考与思维链 (Thinking) 全面激活**：
               - 自动透传 `reasoning_effort: high`，响应侧原生保留并分发 `reasoning_content` 与 Anthropic `thinking_delta`。
-            - 🛠️ **完整支持工具调用 (Function / Tool Calling)**：
-              - 采用黑名单透传机制，请求中的 `tools`、`tool_choice`、`parallel_tool_calls` 100% 完整送达上游。
             - 🔋 **后台常驻守护**：startForegroundService + START_STICKY + 按需 WakeLock，切后台或锁屏长请求永不断流。
 
             *点击下方 Assets 里的 `WorkBuddyApp.apk` 即可下载安装！*
