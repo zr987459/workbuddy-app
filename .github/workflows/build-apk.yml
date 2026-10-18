@@ -50,13 +50,13 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.0
-          name: "WorkBuddy App v1.1.0 (纯安卓独立版)"
+          tag_name: v1.1.1
+          name: "WorkBuddy App v1.1.1 (纯安卓独立版)"
           target_commitish: ${{ github.sha }}
           prerelease: false
           files: dist/WorkBuddyApp.apk
           body: |
-            ### 📱 WorkBuddy App (纯安卓独立版 v1.1.0)
+            ### 📱 WorkBuddy App (纯安卓独立版 v1.1.1)
 
             - 🛠️ **多轮工具调用全链路闭环 (Anthropic ↔ OpenAI 双向深度转换器)**：
               - 采用 Hark 工业级架构：完美支持 `tool_use` 转 `tool_calls` 与 `tool_result` 转独立 `role: tool` 消息；
