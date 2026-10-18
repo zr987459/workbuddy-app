@@ -189,6 +189,9 @@ object TencentGateway {
     }
 
     fun chatSync(payload: JSONObject, convId: String? = null): JSONObject {
+        val modelRaw = payload.optString("model", "deepseek-v4.1-flash-1017")
+        val modelLower = modelRaw.lowercase()
+        val realm = if (modelLower.startsWith("cn:")) "cn" else "global"
         val sb = StringBuilder()
         val sbReasoning = StringBuilder()
         var lastChunkPromptTokens = 20
