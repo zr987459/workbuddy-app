@@ -50,29 +50,27 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.1
-          name: "WorkBuddy App v1.1.1 (纯安卓独立版)"
+          tag_name: v1.1.2
+          name: "WorkBuddy App v1.1.2 (纯安卓独立版)"
           target_commitish: ${{ github.sha }}
           prerelease: false
           files: dist/WorkBuddyApp.apk
           body: |
-            ### 📱 WorkBuddy App (纯安卓独立版 v1.1.1)
+            ### 📱 WorkBuddy App (纯安卓独立版 v1.1.2)
 
-            - 🛠️ **多轮工具调用全链路闭环 (Anthropic ↔ OpenAI 双向深度转换器)**：
-              - 采用 Hark 工业级架构：完美支持 `tool_use` 转 `tool_calls` 与 `tool_result` 转独立 `role: tool` 消息；
-              - 自动执行 `repairToolPairing`（消除孤儿工具消息与调用配对缺失），彻底根除多轮工具调用触发的 `11128` 渠道拦截！
-              - 引入稳定的 `X-Conversation-ID` 锚点推导：多轮会话之间保持严格相同的会话指纹，绝不每轮变动，彻底对齐官方客户端行为！
-            - 🎯 **彻底解决 11102 报错 (model service info not found)**：
-              - 网关全局自动将 `deepseek-v4.1-flash-1017` 别名映射到上游标准注册 ID `deepseek-v4.1-flash`，秒级返回，绝不报错！
-            - 🛡️ **彻底根除 11128 渠道校验拦截 (Illegal API invocation from an unapproved channel)**：
-              - 注入官方客户端风控必备头：`X-CodeBuddy-Request: 1`、`X-Requested-With: XMLHttpRequest`、`Accept-Language: en-US`；
-              - 默认采用官方未封锁的 `/console/chat/completions` 端点，且首行流式智能感知与自动回退，保证工具调用 100% 成功！
-            - 🌐 **100% 对齐腾讯官方 WorkBuddy 国际版真实模型与倍率**：
-              - **0.00x 限免免费白嫖**：`deepseek-v4.1-flash-1017`（最新多模态快照）、`deepseek-v4.1-flash`、`hy4-preview`（混元深度思考）、`hy3` 国际版全部 0 积分免费！
-              - **国际版专属大模型**：`gpt-6-astra` (6.67x 顶级旗舰)、`gpt-5.6-sol`、`gpt-5.4` (原生多模态识图)、`grok-4.7`、`gemini-3.5-flash` 全量就绪；
-            - 🧠 **深度思考与思维链 (Thinking) 全面激活**：
-              - 自动透传 `reasoning_effort: high`，响应侧原生保留并分发 `reasoning_content` 与 Anthropic `thinking_delta`。
-            - 🔋 **后台常驻守护**：startForegroundService + START_STICKY + 按需 WakeLock，切后台或锁屏长请求永不断流。
+            - 🧠 **思考模型 (Thinking) 全生命周期闭环**：
+              - 采用 Hark 架构方案：在 `convertAssistant` 中将历史 `thinking` 块忠实还原为 `reasoning_content`；
+              - 网关内置 `reasoningCache` 自动感知与补齐机制：若客户端（Pi-Web / OpenAI 客户端）未回传历史 `reasoning_content`，网关自动按 `tool_call_id` 与 `conv_id` 自动从缓存补回，彻底终结 DeepSeek 多轮工具调用拒答；
+              - 剔除无脑强制 `reasoning_effort=high`，客户端未显式要求时不盲目强开；
+              - 流式输出中将 thinking 增量与 signature 独立开块（包含 start / thinking_delta / signature_delta / stop），不再与正文挤在 index 0 导致客户端混淆；
+            - 🎯 **稳定的全局会话指纹 (X-Conversation-ID)**：
+              - OpenAI 兼容模式下自动从 `messages[0]` 提取 system 提示词推导会话指纹；Linux 版与 Android 版 100% 算法对齐，多轮交互指纹稳定恒定；
+            - 🛡️ **精细化上游异常捕获 (UpstreamException)**：
+              - 拒绝盲目兜底跳端点掩盖真因，精确捕获上游错误码与片段，透传给客户端；
+            - 🔌 **Socket 超时与挥手加固**：
+              - 客户端连接统一采用 `client.use` 自动挥手关闭，避免客户端死等挂起；空闲读超时放宽至 120 秒，适应长上下文首字延迟；
+            - 🌐 **100% 腾讯官方 WorkBuddy 国际版真实模型与倍率**：
+              - 0.00x Free 限免白嫖：`deepseek-v4.1-flash-1017`、`deepseek-v4.1-flash`、`hy4-preview` 国际版全部 0 积分免费！
 
             *点击下方 Assets 里的 `WorkBuddyApp.apk` 即可下载安装！*
         env:

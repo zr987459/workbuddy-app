@@ -29,10 +29,11 @@ class LocalGatewayServer(
                 while (isRunning) {
                     val client = serverSocket?.accept() ?: break
                     client.tcpNoDelay = true // 减少小包网络延迟
+                    client.soTimeout = 120000 // 120 秒空闲读超时，适应超长思考模型首字返回
                     thread {
                         onBusy()
                         try {
-                            handleConnection(client)
+                            client.use { handleConnection(it) }
                         } finally {
                             onIdle()
                         }
@@ -141,7 +142,7 @@ class LocalGatewayServer(
                         put("total", accounts.length())
                         put("accounts", accounts)
                         put("auth_required", false)
-                        put("version", "1.1.1-android")
+                        put("version", "1.1.2-android")
                     }
                     sendJsonResponse(output, 200, json.toString())
                 }
@@ -236,6 +237,18 @@ class LocalGatewayServer(
         output.flush()
     }
 
+    private fun errorPayload(e: Exception): Pair<Int, JSONObject> {
+        val (status, type) = when {
+            e is UpstreamException && e.code == 11128 -> 403 to "upstream_channel_rejected"
+            e is UpstreamException && e.status == 403 -> 403 to "upstream_forbidden"
+            e is UpstreamException -> 502 to "upstream_error"
+            else -> 500 to "gateway_error"
+        }
+        val err = JSONObject().put("message", e.message ?: type).put("type", type)
+        if (e is UpstreamException) err.put("code", e.code ?: e.status)
+        return status to JSONObject().put("error", err)
+    }
+
     private fun handleOpenAiChat(output: OutputStream, bodyStr: String, reqHeaders: Map<String, String>) {
         try {
             val json = JSONObject(bodyStr)
@@ -245,41 +258,46 @@ class LocalGatewayServer(
 
             if (!isStream) {
                 // 非流式响应：上游透传，完整包含 reasoning_content 与 tool_calls
-                val res = TencentGateway.chatSync(json, convId)
-                val reply = res.optString("content")
-                val reasoning = res.optString("reasoning_content")
-                val toolCalls = res.optJSONArray("tool_calls")
-                val promptTokens = res.optInt("prompt_tokens", 20)
-                val compTokens = res.optInt("completion_tokens", 20)
+                try {
+                    val res = TencentGateway.chatSync(json, convId)
+                    val reply = res.optString("content")
+                    val reasoning = res.optString("reasoning_content")
+                    val toolCalls = res.optJSONArray("tool_calls")
+                    val promptTokens = res.optInt("prompt_tokens", 20)
+                    val compTokens = res.optInt("completion_tokens", 20)
 
-                val oaiResp = JSONObject().apply {
-                    put("id", "chatcmpl_${System.currentTimeMillis()}")
-                    put("object", "chat.completion")
-                    put("created", System.currentTimeMillis() / 1000)
-                    put("model", model)
-                    put("choices", JSONArray().apply {
-                        put(JSONObject().apply {
-                            put("index", 0)
-                            put("message", JSONObject().apply {
-                                put("role", "assistant")
-                                put("content", reply)
-                                if (reasoning.isNotEmpty()) {
-                                    put("reasoning_content", reasoning)
-                                }
-                                if (toolCalls != null) {
-                                    put("tool_calls", toolCalls)
-                                }
+                    val oaiResp = JSONObject().apply {
+                        put("id", "chatcmpl_${System.currentTimeMillis()}")
+                        put("object", "chat.completion")
+                        put("created", System.currentTimeMillis() / 1000)
+                        put("model", model)
+                        put("choices", JSONArray().apply {
+                            put(JSONObject().apply {
+                                put("index", 0)
+                                put("message", JSONObject().apply {
+                                    put("role", "assistant")
+                                    put("content", reply)
+                                    if (reasoning.isNotEmpty()) {
+                                        put("reasoning_content", reasoning)
+                                    }
+                                    if (toolCalls != null) {
+                                        put("tool_calls", toolCalls)
+                                    }
+                                })
+                                put("finish_reason", if (toolCalls != null) "tool_calls" else "stop")
                             })
-                            put("finish_reason", if (toolCalls != null) "tool_calls" else "stop")
                         })
-                    })
-                    put("usage", JSONObject().apply {
-                        put("prompt_tokens", promptTokens)
-                        put("completion_tokens", compTokens)
-                        put("total_tokens", promptTokens + compTokens)
-                    })
+                        put("usage", JSONObject().apply {
+                            put("prompt_tokens", promptTokens)
+                            put("completion_tokens", compTokens)
+                            put("total_tokens", promptTokens + compTokens)
+                        })
+                    }
+                    sendJsonResponse(output, 200, oaiResp.toString())
+                } catch (e: Exception) {
+                    val (st, body) = errorPayload(e)
+                    sendJsonResponse(output, st, body.toString())
                 }
-                sendJsonResponse(output, 200, oaiResp.toString())
             } else {
                 // 流式 Chunked 传输：按字节原样转发 SSE 帧，上游 reasoning_content 与 tool_calls 天然完整送达
                 val sseHeader = "HTTP/1.1 200 OK\r\n" +
@@ -302,13 +320,16 @@ class LocalGatewayServer(
                         }
                     }
                 } catch (e: Exception) {
-                    writeChunk(output, "data: ${JSONObject().apply { put("error", e.message) }}\n\n")
+                    val (_, payload) = errorPayload(e)
+                    writeChunk(output, "data: $payload\n\n")
+                    writeChunk(output, "data: [DONE]\n\n")
                 } finally {
                     endChunked(output)
                 }
             }
         } catch (e: Exception) {
-            sendErrorJson(output, 500, e.message ?: "Chat failed")
+            val (st, body) = errorPayload(e)
+            sendJsonResponse(output, st, body.toString())
         }
     }
 
@@ -324,9 +345,14 @@ class LocalGatewayServer(
 
             if (!isStream) {
                 // 1. 非流式响应
-                val oaiResp = TencentGateway.chatSync(oaiReq, convId)
-                val anthropicResp = AnthropicToOpenAI.convertResponse(oaiResp, modelRaw)
-                sendJsonResponse(output, 200, anthropicResp.toString())
+                try {
+                    val oaiResp = TencentGateway.chatSync(oaiReq, convId)
+                    val anthropicResp = AnthropicToOpenAI.convertResponse(oaiResp, modelRaw)
+                    sendJsonResponse(output, 200, anthropicResp.toString())
+                } catch (e: Exception) {
+                    val (st, body) = errorPayload(e)
+                    sendJsonResponse(output, st, body.toString())
+                }
             } else {
                 // 2. 流式响应 (支持 thinking 与 tool_use 事件)
                 val sseHeader = "HTTP/1.1 200 OK\r\n" +
@@ -357,20 +383,16 @@ class LocalGatewayServer(
                     translator.finish()
                 } catch (e: Exception) {
                     try {
-                        writeChunk(output, "event: error\ndata: ${JSONObject().apply {
-                            put("type", "error")
-                            put("error", JSONObject().apply {
-                                put("type", "upstream_error")
-                                put("message", e.message ?: "upstream streaming failed")
-                            })
-                        }}\n\n")
+                        val (_, body) = errorPayload(e)
+                        writeChunk(output, "event: error\ndata: $body\n\n")
                     } catch (ignored: Exception) {}
                 } finally {
                     endChunked(output)
                 }
             }
         } catch (e: Exception) {
-            sendErrorJson(output, 500, e.message ?: "Anthropic request failed")
+            val (st, body) = errorPayload(e)
+            sendJsonResponse(output, st, body.toString())
         }
     }
 

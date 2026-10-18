@@ -60,17 +60,19 @@ object AnthropicToOpenAI {
         return out
     }
 
-    // assistant: text 合并为 content，tool_use -> tool_calls
+    // assistant: text 合并为 content，tool_use -> tool_calls，thinking -> reasoning_content
     private fun convertAssistant(content: Any?): JSONObject {
         val msg = JSONObject().put("role", "assistant")
         if (content is String) return msg.put("content", content)
         val blocks = content as? JSONArray ?: return msg.put("content", "")
         val text = StringBuilder()
+        val reasoning = StringBuilder()
         val calls = JSONArray()
         for (i in 0 until blocks.length()) {
             val b = blocks.optJSONObject(i) ?: continue
             when (b.optString("type")) {
                 "text" -> text.append(b.str("text"))
+                "thinking" -> reasoning.append(b.str("thinking"))
                 "tool_use" -> calls.put(JSONObject()
                     .put("id", b.getString("id"))
                     .put("type", "function")
@@ -80,6 +82,7 @@ object AnthropicToOpenAI {
                         .put("arguments", (b.optJSONObject("input") ?: JSONObject()).toString())))
             }
         }
+        if (reasoning.isNotEmpty()) msg.put("reasoning_content", reasoning.toString())
         if (calls.length() > 0) {
             msg.put("content", if (text.isEmpty()) JSONObject.NULL else text.toString())
             msg.put("tool_calls", calls)
@@ -229,11 +232,21 @@ class AnthropicStreamTranslator(
 
     private var started = false
     private var textIndex = -1
+    private var thinkIndex = -1
+    private var thinkOpen = false
     private var nextIndex = 0
     private val tools = sortedMapOf<Int, ToolBuf>()
     private var finishReason = ""
     private var inTok = 0
     private var outTok = 0
+
+    private fun closeThinking() {
+        if (!thinkOpen) return
+        thinkOpen = false
+        emit("content_block_delta", JSONObject().put("type", "content_block_delta").put("index", thinkIndex)
+            .put("delta", JSONObject().put("type", "signature_delta").put("signature", "")))
+        emit("content_block_stop", JSONObject().put("type", "content_block_stop").put("index", thinkIndex))
+    }
 
     fun onChunk(chunk: JSONObject) {
         if (!started) {
@@ -248,15 +261,22 @@ class AnthropicStreamTranslator(
         }
         val choice = chunk.optJSONArray("choices")?.optJSONObject(0) ?: return
         choice.optJSONObject("delta")?.let { d ->
-            // 思考增量
+            // 思考增量 (独立块)
             val reasoning = d.str("reasoning_content")
             if (reasoning.isNotEmpty()) {
-                emit("content_block_delta", JSONObject().put("type", "content_block_delta").put("index", 0)
+                if (thinkIndex < 0) {
+                    thinkIndex = nextIndex++
+                    thinkOpen = true
+                    emit("content_block_start", JSONObject().put("type", "content_block_start").put("index", thinkIndex)
+                        .put("content_block", JSONObject().put("type", "thinking").put("thinking", "")))
+                }
+                emit("content_block_delta", JSONObject().put("type", "content_block_delta").put("index", thinkIndex)
                     .put("delta", JSONObject().put("type", "thinking_delta").put("thinking", reasoning)))
             }
             // 正文增量
             val text = d.str("content")
             if (text.isNotEmpty()) {
+                closeThinking()
                 if (textIndex < 0) {
                     textIndex = nextIndex++
                     emit("content_block_start", JSONObject().put("type", "content_block_start").put("index", textIndex)
@@ -281,6 +301,7 @@ class AnthropicStreamTranslator(
 
     fun finish() {
         if (!started) onChunk(JSONObject())
+        closeThinking()
         if (textIndex >= 0) emit("content_block_stop", JSONObject().put("type", "content_block_stop").put("index", textIndex))
         for (t in tools.values) {
             val idx = nextIndex++
@@ -310,6 +331,10 @@ object ConversationIds {
         req.optJSONObject("metadata")?.str("user_id")?.takeIf { it.isNotBlank() }
             ?.let { return uuidOf("meta:$it") }
         // 3) 兜底：system + 第一条 user 消息，多轮之间不变！
+        val sysPrompt = systemText(req.opt("system")) ?: run {
+            val firstMsg = req.optJSONArray("messages")?.optJSONObject(0)
+            if (firstMsg?.optString("role") == "system") firstMsg.optString("content") else null
+        }
         val first = req.optJSONArray("messages")?.let { arr ->
             (0 until arr.length()).map { arr.getJSONObject(it) }.firstOrNull { it.optString("role") == "user" }
         }
@@ -319,7 +344,7 @@ object ConversationIds {
                 .filter { it.optString("type") == "text" }.joinToString("\n") { it.str("text") }
             else -> ""
         }
-        return uuidOf("conv:" + systemText(req.opt("system")).orEmpty() + "\u0000" + firstText)
+        return uuidOf("conv:" + sysPrompt.orEmpty() + "\u0000" + firstText)
     }
 
     private fun uuidOf(s: String): String =

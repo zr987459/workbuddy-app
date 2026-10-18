@@ -226,8 +226,22 @@ def normalize_model(model: str) -> tuple[str, str]:
     m_target = MODEL_ALIASES.get(m_lower, m_lower)
     return realm, m_target
 
-def build_upstream_headers(realm: str, acc: dict) -> dict:
+def derive_conversation_id(messages: list, system_prompt: str = "") -> str:
+    first_user = ""
+    for m in messages:
+        if m.get("role") == "user":
+            c = m.get("content", "")
+            if isinstance(c, str):
+                first_user = c
+            elif isinstance(c, list):
+                first_user = "\n".join(part.get("text", "") for part in c if isinstance(part, dict) and part.get("type") == "text")
+            break
+    anchor = f"conv:{system_prompt}\x00{first_user}"
+    return uuid.uuid3(uuid.NAMESPACE_DNS, anchor).hex
+
+def build_upstream_headers(realm: str, acc: dict, conv_id: str = None) -> dict:
     uid = acc.get("uid", "")
+    c_id = conv_id or uuid.uuid4().hex
     h = {
         "Authorization": f"Bearer {acc.get('access_token')}",
         "Content-Type": "application/json",
@@ -243,7 +257,7 @@ def build_upstream_headers(realm: str, acc: dict) -> dict:
         "X-IDE-Version": "5.5.4",
         "X-Machine-ID": hashlib.sha256(f"wb2a:machine:{uid}".encode()).hexdigest()[:36],
         "X-Session-ID": hashlib.sha256(f"wb2a:session:{uid}".encode()).hexdigest()[:36],
-        "X-Conversation-ID": uuid.uuid4().hex,
+        "X-Conversation-ID": c_id,
         "X-Conversation-Request-ID": uuid.uuid4().hex,
         "X-Conversation-Message-ID": uuid.uuid4().hex,
         "X-Root-Request-ID": uuid.uuid4().hex,
@@ -302,15 +316,16 @@ async def chat_completions(request: Request):
         messages.insert(0, {"role": "system", "content": DEFAULT_SYSTEM_PROMPT})
 
     upstream_base = UPSTREAM_GLOBAL if realm == "global" else UPSTREAM_CN
-    headers = build_upstream_headers(realm, acc)
+    sys_prompt = messages[0].get("content", "") if messages and messages[0].get("role") == "system" else ""
+    c_id = derive_conversation_id(messages, sys_prompt)
+    headers = build_upstream_headers(realm, acc, c_id)
 
     # 采用黑名单模式，完整透传 tools / tool_choice / reasoning_effort 等参数
     upstream_payload = {k: v for k, v in body.items() if k not in ["stream"]}
     upstream_payload["model"] = model_name
     upstream_payload["messages"] = messages
     upstream_payload["stream"] = True
-    if "reasoning_effort" not in upstream_payload:
-        upstream_payload["reasoning_effort"] = "high"
+    upstream_payload["stream_options"] = {"include_usage": True}
 
     if not is_stream:
         # 本地流式聚合为单次响应
@@ -423,7 +438,9 @@ async def anthropic_messages(request: Request):
         })
 
     upstream_base = UPSTREAM_GLOBAL if realm == "global" else UPSTREAM_CN
-    headers = build_upstream_headers(realm, acc)
+    sys_prompt = system_prompt or (messages[0].get("content", "") if messages and messages[0].get("role") == "system" else "")
+    c_id = derive_conversation_id(messages, sys_prompt)
+    headers = build_upstream_headers(realm, acc, c_id)
 
     upstream_payload = {
         "model": model_name,

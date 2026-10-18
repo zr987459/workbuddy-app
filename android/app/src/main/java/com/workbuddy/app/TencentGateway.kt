@@ -11,8 +11,42 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import android.util.Log
+
+class UpstreamException(
+    val status: Int,
+    val code: Int?,
+    val endpoint: String,
+    val snippet: String
+) : IOException("upstream HTTP $status code=$code @ $endpoint: $snippet")
 
 object TencentGateway {
+
+    private const val TAG = "TencentGateway"
+
+    private fun upstreamCode(line: String): Int? {
+        val s = line.removePrefix("data:").trim()
+        if (!s.startsWith("{")) return null
+        return try { JSONObject(s).takeIf { it.has("code") }?.optInt("code") } catch (e: Exception) { null }
+    }
+
+    private fun shouldTryNext(status: Int) = status == 404 || status >= 500
+
+    // LRU 缓存：tool_call_id / cId -> reasoning_content
+    // 当客户端（如 Pi-Web / OpenAI SDK）在多轮工具后未回传 reasoning_content 时，自动补齐
+    private val reasoningCache = object : LinkedHashMap<String, String>(100, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 500
+    }
+
+    @Synchronized
+    fun recordReasoning(key: String, content: String) {
+        if (key.isNotEmpty() && content.isNotEmpty()) {
+            reasoningCache[key] = content
+        }
+    }
+
+    @Synchronized
+    fun getReasoning(key: String): String? = reasoningCache[key]
 
     const val UPSTREAM_GLOBAL = "https://www.workbuddy.ai"
     const val UPSTREAM_CN = "https://copilot.tencent.com"
@@ -267,11 +301,7 @@ object TencentGateway {
         val upstreamPayload = JSONObject(payload.toString())
         upstreamPayload.put("model", cleanModel)
         upstreamPayload.put("stream", true)
-
-        // 如果客户端未显式传 reasoning_effort，对推理模型默认给 high 激活思考
-        if (!upstreamPayload.has("reasoning_effort")) {
-            upstreamPayload.put("reasoning_effort", "high")
-        }
+        upstreamPayload.put("stream_options", JSONObject().put("include_usage", true))
 
         val messagesArray = upstreamPayload.optJSONArray("messages") ?: JSONArray()
         val normMessages = JSONArray()
@@ -291,6 +321,33 @@ object TencentGateway {
         for (i in 0 until messagesArray.length()) {
             normMessages.put(messagesArray.getJSONObject(i))
         }
+
+        // 自动补齐历史 assistant 消息中缺失的 reasoning_content（防止思考模型在工具闭环中校验失败）
+        for (i in 0 until normMessages.length()) {
+            val m = normMessages.optJSONObject(i) ?: continue
+            if (m.optString("role") == "assistant") {
+                if (m.optString("reasoning_content").isEmpty()) {
+                    val calls = m.optJSONArray("tool_calls")
+                    if (calls != null && calls.length() > 0) {
+                        for (k in 0 until calls.length()) {
+                            val id = calls.getJSONObject(k).optString("id")
+                            val cached = getReasoning(id)
+                            if (!cached.isNullOrEmpty()) {
+                                m.put("reasoning_content", cached)
+                                break
+                            }
+                        }
+                    }
+                    if (m.optString("reasoning_content").isEmpty() && convId != null) {
+                        val cachedConv = getReasoning(convId)
+                        if (!cachedConv.isNullOrEmpty()) {
+                            m.put("reasoning_content", cachedConv)
+                        }
+                    }
+                }
+            }
+        }
+
         upstreamPayload.put("messages", normMessages)
 
         val machineId = sha256Prefix("wb2a:machine:$uid")
@@ -300,7 +357,9 @@ object TencentGateway {
 
         val cId = convId ?: UUID.randomUUID().toString().replace("-", "")
 
-        for (url in endpoints) {
+        var lastErr: Exception? = null
+        for ((i, url) in endpoints.withIndex()) {
+            val isLast = i == endpoints.lastIndex
             val reqBuilder = Request.Builder()
                 .url(url)
                 .header("Authorization", "Bearer ${acc.optString("accessToken")}")
@@ -339,37 +398,72 @@ object TencentGateway {
             try {
                 okHttpClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) {
-                        if (url == endpoints.first()) {
-                            return@use // 兜底尝试下一条端点
+                        val body = resp.body?.string().orEmpty()
+                        val err = UpstreamException(resp.code, upstreamCode(body), url, body.take(500))
+                        Log.w(TAG, err.message ?: "")
+                        if (!isLast && shouldTryNext(resp.code)) {
+                            lastErr = err
+                            return@use
                         }
-                        val err = resp.body?.string() ?: "HTTP ${resp.code}"
-                        onLine("data: ${JSONObject().apply { put("error", err) }}\n\n")
-                        return
+                        throw err
                     }
 
-                    val source = resp.body?.source() ?: return
-                    var firstLineChecked = false
+                    val source = resp.body?.source() ?: throw IOException("empty upstream body @ $url")
+                    var first = true
+                    val reasoningBuf = java.lang.StringBuilder()
+                    val toolIds = java.util.ArrayList<String>()
+
                     while (!source.exhausted()) {
                         val line = source.readUtf8Line() ?: break
-                        if (line.isNotEmpty()) {
-                            if (!firstLineChecked) {
-                                firstLineChecked = true
-                                // 若首行是渠道校验拦截，且还有备用端点，立刻兜底重试！
-                                if ((line.contains("11128") || line.contains("11-128")) && url == endpoints.first()) {
-                                    return@use
+                        if (line.isEmpty()) continue
+                        if (first) {
+                            first = false
+                            val code = upstreamCode(line)
+                            if (code != null && code != 0) {
+                                throw UpstreamException(resp.code, code, url, line.take(500))
+                            }
+                        }
+
+                        // 缓存思考增量与 tool_call_id
+                        try {
+                            if (line.startsWith("data: ")) {
+                                val s = line.substring(6).trim()
+                                if (s.startsWith("{") && s != "[DONE]") {
+                                    val delta = JSONObject(s).optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")
+                                    val r = delta?.optString("reasoning_content")
+                                    if (!r.isNullOrEmpty()) reasoningBuf.append(r)
+                                    val tc = delta?.optJSONArray("tool_calls")
+                                    if (tc != null) {
+                                        for (idx in 0 until tc.length()) {
+                                            val tid = tc.getJSONObject(idx).optString("id")
+                                            if (tid.isNotEmpty()) toolIds.add(tid)
+                                        }
+                                    }
                                 }
                             }
-                            val keepGoing = onLine("$line\n\n")
-                            if (!keepGoing) break
+                        } catch (ignored: Exception) {}
+
+                        val keepGoing = onLine("$line\n\n")
+                        if (!keepGoing) break
+                    }
+
+                    if (reasoningBuf.isNotEmpty()) {
+                        val fullR = reasoningBuf.toString()
+                        recordReasoning(cId, fullR)
+                        for (tid in toolIds) {
+                            recordReasoning(tid, fullR)
                         }
                     }
                     return
                 }
-            } catch (e: Exception) {
-                if (url == endpoints.last()) {
-                    onLine("data: ${JSONObject().apply { put("error", e.message ?: "Network error") }}\n\n")
-                }
+            } catch (e: UpstreamException) {
+                throw e
+            } catch (e: IOException) {
+                Log.w(TAG, "network error @ $url: ${e.message}")
+                if (isLast) throw (lastErr ?: e)
+                lastErr = e
             }
         }
+        lastErr?.let { throw it }
     }
 }
