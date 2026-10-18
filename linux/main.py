@@ -346,7 +346,14 @@ async def chat_completions(request: Request):
                     if t.startswith("data: ") and t != "data: [DONE]":
                         try:
                             d = json.loads(t[6:])
-                            choice = d.get("choices", [{}])[0]
+                            usage = d.get("usage")
+                            if usage:
+                                prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+                                comp_tokens = usage.get("completion_tokens", comp_tokens)
+                            choices = d.get("choices") or []
+                            if not choices:
+                                continue
+                            choice = choices[0]
                             delta = choice.get("delta", {})
                             c = delta.get("content", "")
                             if c: full_content += c
@@ -367,10 +374,6 @@ async def chat_completions(request: Request):
                                     if fn.get("arguments"): tool_calls_map[idx]["function"]["arguments"] += fn["arguments"]
                             if choice.get("finish_reason"):
                                 finish_reason = choice["finish_reason"]
-                            usage = d.get("usage")
-                            if usage:
-                                prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
-                                comp_tokens = usage.get("completion_tokens", comp_tokens)
                         except Exception:
                             pass
 

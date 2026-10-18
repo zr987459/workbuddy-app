@@ -32,10 +32,10 @@ object TencentGateway {
 
     private fun shouldTryNext(status: Int) = status == 404 || status >= 500
 
-    // LRU 缓存：tool_call_id / cId -> reasoning_content
-    // 当客户端（如 Pi-Web / OpenAI SDK）在多轮工具后未回传 reasoning_content 时，自动补齐
-    private val reasoningCache = object : LinkedHashMap<String, String>(100, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 500
+    // LRU 缓存：$uid:$tool_call_id -> reasoning_content
+    // 内存上限设为 100 条，保护手机内存低耗运行
+    private val reasoningCache = object : LinkedHashMap<String, String>(50, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 100
     }
 
     @Synchronized
@@ -337,11 +337,15 @@ object TencentGateway {
             normMessages.put(messagesArray.getJSONObject(i))
         }
 
-        // 找到最后一条 user 消息的索引
+        // 找到真正的新一轮 user 消息索引（排除紧跟在 role:tool 后的 user 拆分片段）
         var lastUserIdx = -1
         for (i in 0 until normMessages.length()) {
-            if (normMessages.optJSONObject(i)?.optString("role") == "user") {
-                lastUserIdx = i
+            val curr = normMessages.optJSONObject(i)
+            if (curr?.optString("role") == "user") {
+                val prev = if (i > 0) normMessages.optJSONObject(i - 1) else null
+                if (prev == null || prev.optString("role") != "tool") {
+                    lastUserIdx = i
+                }
             }
         }
 
