@@ -50,25 +50,23 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.2
-          name: "WorkBuddy App v1.1.2 (纯安卓独立版)"
+          tag_name: v1.1.3
+          name: "WorkBuddy App v1.1.3 (纯安卓独立版)"
           target_commitish: ${{ github.sha }}
           prerelease: false
           files: dist/WorkBuddyApp.apk
           body: |
-            ### 📱 WorkBuddy App (纯安卓独立版 v1.1.2)
+            ### 📱 WorkBuddy App (纯安卓独立版 v1.1.3)
 
-            - 🧠 **思考模型 (Thinking) 全生命周期闭环**：
-              - 采用 Hark 架构方案：在 `convertAssistant` 中将历史 `thinking` 块忠实还原为 `reasoning_content`；
-              - 网关内置 `reasoningCache` 自动感知与补齐机制：若客户端（Pi-Web / OpenAI 客户端）未回传历史 `reasoning_content`，网关自动按 `tool_call_id` 与 `conv_id` 自动从缓存补回，彻底终结 DeepSeek 多轮工具调用拒答；
-              - 剔除无脑强制 `reasoning_effort=high`，客户端未显式要求时不盲目强开；
-              - 流式输出中将 thinking 增量与 signature 独立开块（包含 start / thinking_delta / signature_delta / stop），不再与正文挤在 index 0 导致客户端混淆；
-            - 🎯 **稳定的全局会话指纹 (X-Conversation-ID)**：
-              - OpenAI 兼容模式下自动从 `messages[0]` 提取 system 提示词推导会话指纹；Linux 版与 Android 版 100% 算法对齐，多轮交互指纹稳定恒定；
-            - 🛡️ **精细化上游异常捕获 (UpstreamException)**：
-              - 拒绝盲目兜底跳端点掩盖真因，精确捕获上游错误码与片段，透传给客户端；
-            - 🔌 **Socket 超时与挥手加固**：
-              - 客户端连接统一采用 `client.use` 自动挥手关闭，避免客户端死等挂起；空闲读超时放宽至 120 秒，适应长上下文首字延迟；
+            - 🧠 **Hark 深度加固版思考模型闭环**：
+              - 彻底修复全局 `cId` 兜底导致历史 assistant 思考被同构覆盖与串号隐患：严格限制只按 `tool_call_id` 并隔离为 `uid:tool_id` 键位缓存；
+              - 补齐约束：只对最后一条 `user` 之后的活动工具轮次按需注入 `reasoning_content`，杜绝历史长文本倍增与上下文膨胀；
+              - 非流式 `chatSync` 完备同步写入 `recordReasoning`，流式与非流式工具调用闭环 100% 对齐；
+            - 🛡️ **Anthropic 流式异常完备闭合 (abort)**：
+              - 新增 `translator.abort(err)`：发生上游异常前强制先行关闭活动中尚未闭合的 `thinking` 块与 `text` 块，再下发标准规范 `{"type":"error","error":{...}}`，防止移动端客户端挂在半开的事件块上；
+            - 🐧 **Linux 服务端与 Android 体验对齐**：
+              - 非流式补全聚合完整收集并保留 `tool_calls` 与 `reasoning_content`，错误分支补发 `[DONE]` 终止帧；
+              - 会话指纹生成算法与 Android 完全一致；
             - 🌐 **100% 腾讯官方 WorkBuddy 国际版真实模型与倍率**：
               - 0.00x Free 限免白嫖：`deepseek-v4.1-flash-1017`、`deepseek-v4.1-flash`、`hy4-preview` 国际版全部 0 积分免费！
 

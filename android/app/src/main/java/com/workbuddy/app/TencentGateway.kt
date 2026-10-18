@@ -268,6 +268,17 @@ object TencentGateway {
             toolCallsArray.put(slot)
         }
 
+        val fullR = sbReasoning.toString()
+        val uid = acc.optString("uid", "user_default")
+        if (fullR.isNotEmpty()) {
+            for (slot in toolCallsMap.values) {
+                val tid = slot.optString("id")
+                if (tid.isNotEmpty()) {
+                    recordReasoning("$uid:$tid", fullR)
+                }
+            }
+        }
+
         return JSONObject().apply {
             put("content", text)
             put("reasoning_content", sbReasoning.toString())
@@ -322,26 +333,28 @@ object TencentGateway {
             normMessages.put(messagesArray.getJSONObject(i))
         }
 
-        // 自动补齐历史 assistant 消息中缺失的 reasoning_content（防止思考模型在工具闭环中校验失败）
+        // 找到最后一条 user 消息的索引
+        var lastUserIdx = -1
         for (i in 0 until normMessages.length()) {
-            val m = normMessages.optJSONObject(i) ?: continue
-            if (m.optString("role") == "assistant") {
-                if (m.optString("reasoning_content").isEmpty()) {
+            if (normMessages.optJSONObject(i)?.optString("role") == "user") {
+                lastUserIdx = i
+            }
+        }
+
+        // 只补当前轮次（最后一条 user 之后）的 assistant 消息，绝不污染历史更早轮次
+        if (lastUserIdx >= 0) {
+            for (i in (lastUserIdx + 1) until normMessages.length()) {
+                val m = normMessages.optJSONObject(i) ?: continue
+                if (m.optString("role") == "assistant" && m.optString("reasoning_content").isEmpty()) {
                     val calls = m.optJSONArray("tool_calls")
                     if (calls != null && calls.length() > 0) {
                         for (k in 0 until calls.length()) {
                             val id = calls.getJSONObject(k).optString("id")
-                            val cached = getReasoning(id)
+                            val cached = getReasoning("$uid:$id")
                             if (!cached.isNullOrEmpty()) {
                                 m.put("reasoning_content", cached)
                                 break
                             }
-                        }
-                    }
-                    if (m.optString("reasoning_content").isEmpty() && convId != null) {
-                        val cachedConv = getReasoning(convId)
-                        if (!cachedConv.isNullOrEmpty()) {
-                            m.put("reasoning_content", cachedConv)
                         }
                     }
                 }
@@ -449,9 +462,8 @@ object TencentGateway {
 
                     if (reasoningBuf.isNotEmpty()) {
                         val fullR = reasoningBuf.toString()
-                        recordReasoning(cId, fullR)
                         for (tid in toolIds) {
-                            recordReasoning(tid, fullR)
+                            recordReasoning("$uid:$tid", fullR)
                         }
                     }
                     return

@@ -328,10 +328,14 @@ async def chat_completions(request: Request):
     upstream_payload["stream_options"] = {"include_usage": True}
 
     if not is_stream:
-        # 本地流式聚合为单次响应
+        # 本地流式聚合为单次响应，完整保留 tool_calls 与 reasoning_content
         full_content = ""
+        full_reasoning = ""
+        tool_calls_map = {}
         prompt_tokens = 20
         comp_tokens = 20
+        finish_reason = "stop"
+
         async with httpx.AsyncClient(proxy=get_proxy(), timeout=120.0) as client:
             async with client.stream("POST", f"{upstream_base}/console/chat/completions", headers=headers, json=upstream_payload) as resp:
                 if resp.status_code != 200:
@@ -342,17 +346,48 @@ async def chat_completions(request: Request):
                     if t.startswith("data: ") and t != "data: [DONE]":
                         try:
                             d = json.loads(t[6:])
-                            c = d["choices"][0]["delta"].get("content", "")
+                            choice = d.get("choices", [{}])[0]
+                            delta = choice.get("delta", {})
+                            c = delta.get("content", "")
                             if c: full_content += c
+                            r = delta.get("reasoning_content", "")
+                            if r: full_reasoning += r
+                            tc = delta.get("tool_calls")
+                            if tc:
+                                for i, call in enumerate(tc):
+                                    idx = call.get("index", i)
+                                    if idx not in tool_calls_map:
+                                        tool_calls_map[idx] = {
+                                            "id": call.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                                            "type": "function",
+                                            "function": {"name": "", "arguments": ""}
+                                        }
+                                    fn = call.get("function", {})
+                                    if fn.get("name"): tool_calls_map[idx]["function"]["name"] += fn["name"]
+                                    if fn.get("arguments"): tool_calls_map[idx]["function"]["arguments"] += fn["arguments"]
+                            if choice.get("finish_reason"):
+                                finish_reason = choice["finish_reason"]
+                            usage = d.get("usage")
+                            if usage:
+                                prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+                                comp_tokens = usage.get("completion_tokens", comp_tokens)
                         except Exception:
                             pass
+
+        msg = {"role": "assistant", "content": full_content or None}
+        if full_reasoning:
+            msg["reasoning_content"] = full_reasoning
+        if tool_calls_map:
+            msg["tool_calls"] = list(tool_calls_map.values())
+            finish_reason = "tool_calls"
+
         return {
             "id": f"chatcmpl_{int(time.time()*1000)}",
             "object": "chat.completion",
             "created": int(time.time()),
             "model": model_raw,
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": full_content}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": promptTokens if 'promptTokens' in locals() else 20, "completion_tokens": len(full_content)//2, "total_tokens": 40}
+            "choices": [{"index": 0, "message": msg, "finish_reason": finish_reason}],
+            "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": comp_tokens, "total_tokens": prompt_tokens + comp_tokens}
         }
     else:
         async def stream_proxy():
@@ -367,12 +402,14 @@ async def chat_completions(request: Request):
                     if resp.status_code != 200:
                         err = await resp.aread()
                         yield f"data: {json.dumps({'error': err.decode(errors='ignore')})}\n\n"
+                        yield "data: [DONE]\n\n"
                         return
                     async for line in resp.aiter_lines():
                         if line:
                             yield f"{line}\n\n"
             except Exception as e:
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                yield "data: [DONE]\n\n"
             finally:
                 await client.aclose()
 

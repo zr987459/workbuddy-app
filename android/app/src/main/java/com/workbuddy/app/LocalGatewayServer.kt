@@ -142,7 +142,7 @@ class LocalGatewayServer(
                         put("total", accounts.length())
                         put("accounts", accounts)
                         put("auth_required", false)
-                        put("version", "1.1.2-android")
+                        put("version", "1.1.3-android")
                     }
                     sendJsonResponse(output, 200, json.toString())
                 }
@@ -246,7 +246,7 @@ class LocalGatewayServer(
         }
         val err = JSONObject().put("message", e.message ?: type).put("type", type)
         if (e is UpstreamException) err.put("code", e.code ?: e.status)
-        return status to JSONObject().put("error", err)
+        return status to JSONObject().put("type", "error").put("error", err)
     }
 
     private fun handleOpenAiChat(output: OutputStream, bodyStr: String, reqHeaders: Map<String, String>) {
@@ -384,7 +384,7 @@ class LocalGatewayServer(
                 } catch (e: Exception) {
                     try {
                         val (_, body) = errorPayload(e)
-                        writeChunk(output, "event: error\ndata: $body\n\n")
+                        translator.abort(body)
                     } catch (ignored: Exception) {}
                 } finally {
                     endChunked(output)

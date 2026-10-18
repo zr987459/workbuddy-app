@@ -299,6 +299,16 @@ class AnthropicStreamTranslator(
         choice.str("finish_reason").takeIf { it.isNotEmpty() }?.let { finishReason = it }
     }
 
+    fun abort(err: JSONObject) {
+        closeThinking()
+        if (textIndex >= 0) {
+            emit("content_block_stop", JSONObject().put("type", "content_block_stop").put("index", textIndex))
+            textIndex = -1
+        }
+        val innerErr = err.optJSONObject("error") ?: err
+        emit("error", JSONObject().put("type", "error").put("error", innerErr))
+    }
+
     fun finish() {
         if (!started) onChunk(JSONObject())
         closeThinking()
