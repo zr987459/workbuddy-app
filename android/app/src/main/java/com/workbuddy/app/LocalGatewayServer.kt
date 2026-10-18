@@ -144,7 +144,7 @@ class LocalGatewayServer(
                         put("today_requests", GatewayMetrics.getTodayRequests())
                         put("today_tokens", GatewayMetrics.getTodayTokens())
                         put("auth_required", false)
-                        put("version", "1.2.0-android")
+                        put("version", "1.2.1-android")
                     }
                     sendJsonResponse(output, 200, json.toString())
                 }

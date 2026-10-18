@@ -50,23 +50,23 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.2.0
-          name: "WorkBuddy App v1.2.0 (纯安卓独立版 · 后台常驻+统计+实时日志)"
+          tag_name: v1.2.1
+          name: "WorkBuddy App v1.2.1 (纯安卓独立版 · 前端热更新同步与常驻守护)"
           target_commitish: ${{ github.sha }}
           prerelease: false
           files: dist/WorkBuddyApp.apk
           body: |
-            ### 📱 WorkBuddy App (纯安卓独立版 v1.2.0)
+            ### 📱 WorkBuddy App (纯安卓独立版 v1.2.1)
 
+            - 🎨 **同步打包真实移动端前端 Assets**：
+              - 修复了之前只改动根目录 `web/` 而未同步更新至 Android 原生 assets 目录导致界面未变更的打包缺陷；
+              - 底部胶囊导航栏正式装配第 5 个 Tab「📜 日志」，主界面「今日请求」与「今日 Token」实时展示真实调用与消耗；
+              - WebView 启用 `LOAD_NO_CACHE` 并自动清除历史静态缓存，保证每次安装更新立刻呈现最新视觉；
             - 🛡️ **后台常驻启动与开机守护**：
               - 接入 `BootReceiver`：支持系统开机 (`BOOT_COMPLETED`) 与应用更新覆盖 (`MY_PACKAGE_REPLACED`) 自动静默拉起网关前台服务；
               - 修复物理返回键退出隐患：主界面按返回键自动执行 `moveTaskToBack(true)` 退居后台守护，杜绝 Activity 意外关闭断连；
             - 📊 **首页指标实时准确统计**：
               - 落地轻量高性能 `GatewayMetrics` 持久化模块：实时统计当天「今日请求」与「今日 Token」消耗总数，按自然日自动重置并即时刷新；
-            - 📜 **全新「运行日志」模块**：
-              - 移动端底部胶囊导航栏新增第 5 个 Tab「日志」；
-              - 实时可视化展示每笔 API 请求流水：请求时刻、协议路由、调用模型、耗时毫秒数、Token 消耗及错误告警；
-              - 支持一键刷新与一键清空日志；
             - ⚡ **对齐成熟开源项目双端点回退与反探测脱敏**：
               - 11128 渠道拦截毫秒级自动回退至 `/console`；
               - 403 WAF 拦截自动回退至 `/v2`；
