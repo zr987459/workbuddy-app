@@ -30,7 +30,24 @@ object TencentGateway {
         return try { JSONObject(s).takeIf { it.has("code") }?.optInt("code") } catch (e: Exception) { null }
     }
 
-    private fun shouldTryNext(status: Int) = status == 404 || status >= 500
+    private fun isChannelCheck(code: Int?, body: String): Boolean {
+        if (code == 11128 || body.contains("11128") || body.contains("11-128")) {
+            val lower = body.lowercase()
+            return body.contains("渠道校验") || lower.contains("channel verification") || lower.contains("official client")
+        }
+        return false
+    }
+
+    private fun isWafBlocked(status: Int, body: String): Boolean {
+        return status == 403 && (body.contains("WAF Block Page") || body.contains("myqcloud.com") || !body.contains("\"code\":"))
+    }
+
+    private fun shouldTryNext(status: Int, code: Int?, body: String): Boolean {
+        if (status == 404 || status >= 500) return true
+        if (isChannelCheck(code, body)) return true
+        if (isWafBlocked(status, body)) return true
+        return false
+    }
 
     // LRU 缓存：$uid:$tool_call_id -> reasoning_content
     // 内存上限设为 100 条，保护手机内存低耗运行
@@ -323,7 +340,11 @@ object TencentGateway {
         var hasSystem = false
         if (messagesArray.length() > 0) {
             val first = messagesArray.optJSONObject(0)
-            if (first?.optString("role") == "system") {
+            val role = first?.optString("role")
+            if (role == "system") {
+                hasSystem = true
+            } else if (role == "developer") {
+                first.put("role", "system")
                 hasSystem = true
             }
         }
@@ -335,6 +356,16 @@ object TencentGateway {
         }
         for (i in 0 until messagesArray.length()) {
             normMessages.put(messagesArray.getJSONObject(i))
+        }
+
+        // 出站脱敏（对齐成熟开源项目 workbuddy2api/sanitize.go）：
+        // 上游对请求体中的裸数字 11128 有敏感拦截探测，改写为 11-128 消除误触发
+        for (i in 0 until normMessages.length()) {
+            val m = normMessages.optJSONObject(i) ?: continue
+            val c = m.opt("content")
+            if (c is String && c.contains("11128")) {
+                m.put("content", c.replace("11128", "11-128"))
+            }
         }
 
         // 找到真正的新一轮 user 消息索引（排除紧跟在 role:tool 后的 user 拆分片段）
@@ -426,9 +457,9 @@ object TencentGateway {
                         } else {
                             body.take(300)
                         }
-                        val err = UpstreamException(resp.code, upstreamCode(body), url, snippet)
+                        val err = UpstreamException(resp.code, code, url, snippet)
                         Log.w(TAG, err.message ?: "")
-                        if (!isLast && shouldTryNext(resp.code)) {
+                        if (!isLast && shouldTryNext(resp.code, code, body)) {
                             lastErr = err
                             return@use
                         }
@@ -447,7 +478,12 @@ object TencentGateway {
                             first = false
                             val code = upstreamCode(line)
                             if (code != null && code != 0) {
-                                throw UpstreamException(resp.code, code, url, line.take(500))
+                                val err = UpstreamException(resp.code, code, url, line.take(500))
+                                if (!isLast && shouldTryNext(resp.code, code, line)) {
+                                    lastErr = err
+                                    return@use
+                                }
+                                throw err
                             }
                         }
 

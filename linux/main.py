@@ -269,6 +269,22 @@ def build_upstream_headers(realm: str, acc: dict, conv_id: str = None) -> dict:
         h["X-Domain"] = "www.workbuddy.ai"
     return h
 
+def is_channel_check(status_code: int, body_str: str) -> bool:
+    if "11128" in body_str or "11-128" in body_str:
+        lower = body_str.lower()
+        return "渠道校验" in body_str or "channel verification" in lower or "official client" in lower
+    return False
+
+def is_waf_blocked(status_code: int, body_str: str) -> bool:
+    return status_code == 403 and ("WAF Block Page" in body_str or "myqcloud.com" in body_str or '"code":' not in body_str)
+
+def should_try_next(status_code: int, body_str: str) -> bool:
+    if status_code in (404, 500, 502, 503):
+        return True
+    if is_channel_check(status_code, body_str) or is_waf_blocked(status_code, body_str):
+        return True
+    return False
+
 @app.get("/v1/models")
 @app.get("/v1/v1/models")
 async def list_models():
@@ -315,6 +331,12 @@ async def chat_completions(request: Request):
     if not messages or messages[0].get("role") != "system":
         messages.insert(0, {"role": "system", "content": DEFAULT_SYSTEM_PROMPT})
 
+    # 出站脱敏 11128 -> 11-128 (对齐 workbuddy2api/sanitize.go)
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, str) and "11128" in c:
+            m["content"] = c.replace("11128", "11-128")
+
     upstream_base = UPSTREAM_GLOBAL if realm == "global" else UPSTREAM_CN
     sys_prompt = messages[0].get("content", "") if messages and messages[0].get("role") == "system" else ""
     c_id = derive_conversation_id(messages, sys_prompt)
@@ -336,44 +358,56 @@ async def chat_completions(request: Request):
         comp_tokens = 20
         finish_reason = "stop"
 
-        async with httpx.AsyncClient(proxy=get_proxy(), timeout=120.0) as client:
-            async with client.stream("POST", f"{upstream_base}/v2/chat/completions", headers=headers, json=upstream_payload) as resp:
-                if resp.status_code != 200:
-                    err = await resp.aread()
-                    return JSONResponse(status_code=resp.status_code, content={"error": {"message": err.decode(errors="ignore")}})
-                async for line in resp.aiter_lines():
-                    t = line.strip()
-                    if t.startswith("data: ") and t != "data: [DONE]":
-                        try:
-                            d = json.loads(t[6:])
-                            usage = d.get("usage")
-                            if usage:
-                                prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
-                                comp_tokens = usage.get("completion_tokens", comp_tokens)
-                            choices = d.get("choices") or []
-                            if not choices:
-                                continue
-                            choice = choices[0]
-                            delta = choice.get("delta", {})
-                            c = delta.get("content", "")
-                            if c: full_content += c
-                            r = delta.get("reasoning_content", "")
-                            if r: full_reasoning += r
-                            tc = delta.get("tool_calls")
-                            if tc:
-                                for i, call in enumerate(tc):
-                                    idx = call.get("index", i)
-                                    if idx not in tool_calls_map:
-                                        tool_calls_map[idx] = {
-                                            "id": call.get("id", f"call_{uuid.uuid4().hex[:8]}"),
-                                            "type": "function",
-                                            "function": {"name": "", "arguments": ""}
-                                        }
-                                    fn = call.get("function", {})
-                                    if fn.get("name"): tool_calls_map[idx]["function"]["name"] += fn["name"]
-                                    if fn.get("arguments"): tool_calls_map[idx]["function"]["arguments"] += fn["arguments"]
-                            if choice.get("finish_reason"):
-                                finish_reason = choice["finish_reason"]
+        candidate_endpoints = [
+            f"{upstream_base}/v2/chat/completions",
+            f"{upstream_base}/console/chat/completions",
+        ]
+        for idx, ep_url in enumerate(candidate_endpoints):
+            is_last = (idx == len(candidate_endpoints) - 1)
+            async with httpx.AsyncClient(proxy=get_proxy(), timeout=120.0) as client:
+                async with client.stream("POST", ep_url, headers=headers, json=upstream_payload) as resp:
+                    if resp.status_code != 200:
+                        err_bytes = await resp.aread()
+                        err_str = err_bytes.decode(errors="ignore")
+                        if not is_last and should_try_next(resp.status_code, err_str):
+                            continue
+                        return JSONResponse(status_code=resp.status_code, content={"error": {"message": err_str}})
+                    async for line in resp.aiter_lines():
+                        t = line.strip()
+                        if t.startswith("data: ") and t != "data: [DONE]":
+                            try:
+                                d = json.loads(t[6:])
+                                usage = d.get("usage")
+                                if usage:
+                                    prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+                                    comp_tokens = usage.get("completion_tokens", comp_tokens)
+                                choices = d.get("choices") or []
+                                if not choices:
+                                    continue
+                                choice = choices[0]
+                                delta = choice.get("delta", {})
+                                c = delta.get("content", "")
+                                if c: full_content += c
+                                r = delta.get("reasoning_content", "")
+                                if r: full_reasoning += r
+                                tc = delta.get("tool_calls")
+                                if tc:
+                                    for i, call in enumerate(tc):
+                                        i_call = call.get("index", i)
+                                        if i_call not in tool_calls_map:
+                                            tool_calls_map[i_call] = {
+                                                "id": call.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                                                "type": "function",
+                                                "function": {"name": "", "arguments": ""}
+                                            }
+                                        fn = call.get("function", {})
+                                        if fn.get("name"): tool_calls_map[i_call]["function"]["name"] += fn["name"]
+                                        if fn.get("arguments"): tool_calls_map[i_call]["function"]["arguments"] += fn["arguments"]
+                                if choice.get("finish_reason"):
+                                    finish_reason = choice["finish_reason"]
+                            except Exception:
+                                pass
+                    break
                         except Exception:
                             pass
 
@@ -395,21 +429,26 @@ async def chat_completions(request: Request):
     else:
         async def stream_proxy():
             client = httpx.AsyncClient(proxy=get_proxy(), timeout=120.0)
+            candidate_endpoints = [
+                f"{upstream_base}/v2/chat/completions",
+                f"{upstream_base}/console/chat/completions",
+            ]
             try:
-                async with client.stream(
-                    "POST",
-                    f"{upstream_base}/v2/chat/completions",
-                    headers=headers,
-                    json=upstream_payload
-                ) as resp:
-                    if resp.status_code != 200:
-                        err = await resp.aread()
-                        yield f"data: {json.dumps({'error': err.decode(errors='ignore')})}\n\n"
-                        yield "data: [DONE]\n\n"
+                for idx, ep_url in enumerate(candidate_endpoints):
+                    is_last = (idx == len(candidate_endpoints) - 1)
+                    async with client.stream("POST", ep_url, headers=headers, json=upstream_payload) as resp:
+                        if resp.status_code != 200:
+                            err_bytes = await resp.aread()
+                            err_str = err_bytes.decode(errors="ignore")
+                            if not is_last and should_try_next(resp.status_code, err_str):
+                                continue
+                            yield f"data: {json.dumps({'error': err_str})}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+                        async for line in resp.aiter_lines():
+                            if line:
+                                yield f"{line}\n\n"
                         return
-                    async for line in resp.aiter_lines():
-                        if line:
-                            yield f"{line}\n\n"
             except Exception as e:
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
                 yield "data: [DONE]\n\n"

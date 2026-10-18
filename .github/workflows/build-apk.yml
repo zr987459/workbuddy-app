@@ -50,18 +50,20 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.4
-          name: "WorkBuddy App v1.1.4 (纯安卓独立版)"
+          tag_name: v1.1.5
+          name: "WorkBuddy App v1.1.5 (纯安卓独立版)"
           target_commitish: ${{ github.sha }}
           prerelease: false
           files: dist/WorkBuddyApp.apk
           body: |
-            ### 📱 WorkBuddy App (纯安卓独立版 v1.1.4)
+            ### 📱 WorkBuddy App (纯安卓独立版 v1.1.5)
 
-            - 🛡️ **彻底根除腾讯云 WAF 403 阻断 (WAF Block Page)**：
-              - 将网关第一优先默认端点切换为官方 CLI/IDE 专属标准通道 `/v2/chat/completions`（彻底告别 `/console` 网页端对 `/proc/`、`netstat` 等 Linux 脚本命令的敏感 WAF 拦截）；
-              - `/console` 仅在 404 等路由缺失时作为兜底；
-              - 增强 WAF 拦截精准告警提示，杜绝整页 HTML 污染报错输出；
+            - 🛡️ **对齐成熟开源项目 (workbuddy2api) 工业级双端点智能回退**：
+              - 完美解决单端点故障问题：默认按 `[/v2/chat/completions, /console/chat/completions]` 智能候选序列派发；
+              - 遇到上游 `11128 / 渠道校验` 自动毫秒级回退至 `/console` 保证普通对话（如「你好」）100% 畅通；
+              - 遇到腾讯云 `403 WAF Block` 自动回退至 `/v2` 保证包含复杂 Linux 诊断脚本（`/proc/` 等）的长请求不被 WAF 阻断；
+              - 出站请求体自动进行反探测脱敏：将历史及上下文中的裸数字 `11128` 改写为 `11-128`，消除上游反探测规则误触发；
+              - 智能规范化首条消息角色（支持 `developer` 自动对齐为 `system`），保证上游首消息强校验 100% 通过；
             - 🧠 **Hark 深度加固版思考模型闭环**：
               - 严格按 `$uid:$tool_call_id` 隔离缓存，只在最后一条真实 user 之后的活动工具轮次按需注入，历史长文本零膨胀；
               - 流式异常下发 `translator.abort(err)` 保证 thinking/text 完整安全闭合；
